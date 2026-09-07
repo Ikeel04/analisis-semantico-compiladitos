@@ -150,6 +150,12 @@ class SemanticChecker:
         while scope is not None:
             symbol = scope.resolve_local(name)
             if symbol is not None:
+                if symbol.kind == "function":
+                    return self._fail(
+                        f"la función '{name}' debe llamarse con paréntesis", node)
+                if symbol.kind == "class":
+                    return self._fail(
+                        f"la clase '{name}' debe instanciarse con 'new'", node)
                 if crossed_function and symbol.kind != "function" and self._functions:
                     self._functions[-1].captured.add(name)
                 return symbol.type if symbol.type is not None else ts.ERROR

@@ -6,7 +6,7 @@ let a: integer = 10;
 
 ~~~
 
-let s = 'hola';
+let s = '123';
 let b: string = "mundo";
 @
 #

@@ -94,6 +94,55 @@ function f() {
         self.assertValido(self.analizar(codigo))
 
 
+class TestFunciones(BasePipeline):
+
+    def test_funcion_recursiva_factorial(self):
+        codigo = """
+function factorial(n: integer): integer {
+  if (n <= 1) { return 1; }
+  return n * factorial(n - 1);
+}
+function uso() {
+  var x: integer = factorial(5);
+}
+"""
+        self.assertValido(self.analizar(codigo))
+
+    def test_funcion_anidada_captura_variables_del_entorno(self):
+        codigo = """
+function externa(): integer {
+  var contador: integer = 10;
+  function interna(x: integer): integer {
+    return contador + x;
+  }
+  return interna(5);
+}
+"""
+        self.assertValido(self.analizar(codigo))
+
+    def test_funcion_anidada_no_ve_variables_de_otro_ambito(self):
+        self.assertErrorSemantico(
+            'function a() { var x: integer = 1; }'
+            'function b() { var y: integer = x; }',
+            "'x' no ha sido declarado")
+
+    def test_return_fuera_de_funcion(self):
+        self.assertErrorSemantico(
+            "return 5;",
+            "'return' solo puede usarse dentro de una función")
+
+    def test_usar_funcion_como_valor_reporta_error(self):
+        self.assertErrorSemantico(
+            'function f(): integer { return 2; }'
+            'function g() { var x: integer = f * 2; }',
+            "la función 'f' debe llamarse con paréntesis")
+
+    def test_usar_clase_como_valor_reporta_error(self):
+        self.assertErrorSemantico(
+            'class A { } function g() { var x: integer = A; }',
+            "la clase 'A' debe instanciarse con 'new'")
+
+
 class TestReglasDeTipos(BasePipeline):
 
     def test_operacion_invalida_entre_tipos(self):
@@ -263,6 +312,45 @@ class TestClasesYObjetos(BasePipeline):
         self.assertErrorSemantico(
             'class B : Fantasma { }',
             "la clase 'Fantasma' no ha sido declarada")
+
+
+class TestFloats(BasePipeline):
+
+    def test_declaracion_de_float_con_literal(self):
+        self.assertValido(self.analizar("let f: float = 1.5;"))
+
+    def test_operaciones_mixtas_entero_y_float(self):
+        self.assertValido(self.analizar("var x = 2.5 + 1;"))
+        self.assertValido(self.analizar("var x = 1 * 2.0;"))
+
+    def test_menos_unario_sobre_float(self):
+        self.assertValido(self.analizar("var x = -2.5;"))
+
+    def test_float_no_es_asignable_a_integer(self):
+        self.assertErrorSemantico(
+            "let n: integer = 1.5;",
+            "se esperaba 'integer' y se recibió 'float'")
+
+    def test_integer_si_es_asignable_a_float(self):
+        self.assertValido(self.analizar("let f: float = 1;"))
+
+    def test_operacion_mixta_float_y_string_es_invalida(self):
+        self.assertErrorSemantico(
+            "var x = 1.5 * \"hola\";",
+            "no se puede aplicar '*' entre 'float' y 'string'")
+
+    def test_arreglo_de_floats_valido(self):
+        self.assertValido(self.analizar("let nums: float[] = [1, 2.0];"))
+
+    def test_indice_de_arreglo_no_puede_ser_float(self):
+        self.assertErrorSemantico(
+            "let arr: integer[] = [1]; var x = arr[1.5];",
+            "el índice de un arreglo debe ser de tipo 'integer', no 'float'")
+
+    def test_float_no_es_condicion_boolean(self):
+        self.assertErrorSemantico(
+            "function f() { if (1.5) { } }",
+            "la condición de 'if' debe ser boolean")
 
 
 class TestReglasGenerales(BasePipeline):

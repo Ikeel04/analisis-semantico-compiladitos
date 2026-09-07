@@ -17,6 +17,25 @@ class TestOperacionesAritmeticas(unittest.TestCase):
     def test_suma_de_enteros_es_entero(self):
         self.assertEqual(ts.arithmetic("+", ts.INTEGER, ts.INTEGER), ts.INTEGER)
 
+    def test_suma_de_floats_es_float(self):
+        self.assertEqual(ts.arithmetic("+", ts.FLOAT, ts.FLOAT), ts.FLOAT)
+
+    def test_operaciones_mixtas_entero_y_float_generan_float(self):
+        for op in ("+", "-", "*", "/"):
+            self.assertEqual(ts.arithmetic(op, ts.INTEGER, ts.FLOAT), ts.FLOAT)
+            self.assertEqual(ts.arithmetic(op, ts.FLOAT, ts.INTEGER), ts.FLOAT)
+
+    def test_entero_es_asignable_a_float_pero_no_al_reves(self):
+        self.assertTrue(ts.assignable(ts.FLOAT, ts.INTEGER))
+        self.assertFalse(ts.assignable(ts.INTEGER, ts.FLOAT))
+
+    def test_comparacion_entre_float_e_integer_es_valida(self):
+        for op in ("==", "!=", "<", "<=", ">", ">="):
+            self.assertEqual(
+                ts.comparison(op, ts.FLOAT, ts.INTEGER), ts.BOOLEAN)
+            self.assertEqual(
+                ts.comparison(op, ts.INTEGER, ts.FLOAT), ts.BOOLEAN)
+
     def test_resta_multiplicacion_division_y_modulo_de_enteros(self):
         for op in ("-", "*", "/", "%"):
             self.assertEqual(ts.arithmetic(op, ts.INTEGER, ts.INTEGER), ts.INTEGER)

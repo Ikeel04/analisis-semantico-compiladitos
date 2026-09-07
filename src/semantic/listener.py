@@ -189,7 +189,7 @@ class SemanticListener(CompiscriptListener):
         else:
             op = ctx.getChild(0).getText()
             self.tipo_de[id(ctx)] = self.checker.unary(
-                op, self._tipo_de(ctx.unaryExpr(0)), ctx)
+                op, self._tipo_de(ctx.unaryExpr()), ctx)
 
     def exitPrimaryExpr(self, ctx):
         self.tipo_de[id(ctx)] = self._tipo_de(ctx.getChild(0))
@@ -197,7 +197,12 @@ class SemanticListener(CompiscriptListener):
     def exitLiteralExpr(self, ctx):
         if ctx.Literal() is not None:
             texto = ctx.Literal().getText()
-            self.tipo_de[id(ctx)] = ts.STRING if texto.startswith('"') else ts.INTEGER
+            if texto.startswith('"'):
+                self.tipo_de[id(ctx)] = ts.STRING
+            elif "." in texto:
+                self.tipo_de[id(ctx)] = ts.FLOAT
+            else:
+                self.tipo_de[id(ctx)] = ts.INTEGER
         elif ctx.arrayLiteral() is not None:
             self.tipo_de[id(ctx)] = self._tipo_de(ctx.arrayLiteral())
         else:

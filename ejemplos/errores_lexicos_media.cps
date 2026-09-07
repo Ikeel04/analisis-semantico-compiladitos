@@ -11,7 +11,7 @@ function calcular(n: integer): integer {
 
 ~~~
 
-let texto = 'malito';
+let texto = '999';
 @
 let limite: integer = 50;
 #

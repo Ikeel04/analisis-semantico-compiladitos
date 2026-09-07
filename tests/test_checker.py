@@ -180,6 +180,18 @@ class TestFunciones(BaseChecker):
         self.c.exit_function()
         self.assertSinErrores()
 
+    def test_usar_una_funcion_como_valor_reporta_error(self):
+        self._declarar("f", [], ts.INTEGER)
+        self.assertEqual(self.c.use_variable("f"), ts.ERROR)
+        self.assertMensaje("la función 'f' debe llamarse con paréntesis")
+
+    def test_usar_una_clase_como_valor_reporta_error(self):
+        simbolo = self.c.declare_class("Punto")
+        self.c.enter_class(simbolo)
+        self.c.exit_class()
+        self.assertEqual(self.c.use_variable("Punto"), ts.ERROR)
+        self.assertMensaje("la clase 'Punto' debe instanciarse con 'new'")
+
     def test_funcion_anidada_captura_variables_del_entorno(self):
         externa = self._declarar("externa", [], ts.INTEGER)
         self.c.enter_function(externa)
