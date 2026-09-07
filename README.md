@@ -78,16 +78,6 @@ streamlit run app.py
   como acostumbran C/Java); las condiciones de `if`/`while`/`do-while`/`for`
   **sí** deben ser `boolean`.
 
-## Persona
-
-**Persona 3** — Clases/Objetos + Listas + Generales + IDE. Pasos:
-
-1. Infraestructura (parser + pipeline + IDE).
-2. Listener semántico + clases y objetos + integración de pipeline.
-3. Reglas generales (código muerto, `case` duplicado, expresiones sin sentido,
-   `print` de void).
-4. IDE completo + tabla de ámbitos + README.
-
 ## Ejemplos
 
 En `ejemplos/` hay programas válidos (`ok_*.cps`) y con errores léxicos,
