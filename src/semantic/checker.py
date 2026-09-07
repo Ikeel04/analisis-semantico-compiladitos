@@ -23,6 +23,7 @@ class _FunctionFrame:
         self.symbol = symbol
         self.returned_value = False
         self.captured: set[str] = set()
+        self.en_clase = False   # True si es un método de clase (habilita 'this')
 
 
 class SemanticChecker:
@@ -31,9 +32,10 @@ class SemanticChecker:
                  is_subclass=None):
         self.table = table or SymbolTable()
         self.errors = errors or ErrorCollector()
-        self.is_subclass = is_subclass          # hook de herencia (clases)
+        self.is_subclass = is_subclass or self._es_subclase  # hook de herencia (clases)
         self._functions: list[_FunctionFrame] = []
         self._loop_depth: list[int] = [0]       # un contador por función
+        self._classes: list[str] = []           # tipos de las clases cuyo método se recorre ('this')
 
     def _fail(self, message: str, node) -> str:
         self.errors.add(message, node)
@@ -161,15 +163,23 @@ class SemanticChecker:
         para que pueda llamarse a sí misma (recursión).
 
         params: lista de tuplas (nombre, tipo). Para las funciones, symbol.type
-        guarda el tipo de retorno y symbol.extra['params'] la firma.
+        guarda el tipo de retorno y symbol.extra['params'] la firma. Dentro de
+        una clase la función es un método; llamada 'constructor' es el
+        constructor de la clase y no acepta tipo de retorno.
         """
+        en_clase = self.table.current.kind == "class"
+        es_constructor = en_clase and name == "constructor"
+        if es_constructor and return_type is not None:
+            self.errors.add("el constructor no puede declarar un tipo de retorno", node)
         return_type = return_type or ts.VOID
         if self.table.lookup_local(name) is not None:
             self.errors.add(
                 f"'{name}' ya fue declarado en este ámbito; Compiscript no permite sobrecarga",
                 node)
-            return Symbol(name, "function", return_type, params=params)
-        return self.table.insert(name, "function", return_type, params=params)
+            return Symbol(name, "function", return_type, params=params,
+                          is_constructor=es_constructor, is_method=en_clase)
+        return self.table.insert(name, "function", return_type, params=params,
+                                 is_constructor=es_constructor, is_method=en_clase)
 
     def enter_function(self, symbol: Symbol, node=None) -> None:
         """Abre el ámbito de la función y declara sus parámetros.
@@ -181,11 +191,18 @@ class SemanticChecker:
         self.table.enter_scope("function", name=symbol.name)
         for param_name, param_type in symbol.extra.get("params", []):
             self._insert(param_name, "parameter", param_type, node, is_initialized=True)
-        self._functions.append(_FunctionFrame(symbol))
+        frame = _FunctionFrame(symbol)
+        padre = self.table.current.parent
+        frame.en_clase = padre is not None and padre.kind == "class"
+        if frame.en_clase:
+            self._classes.append(padre.name)   # habilita 'this' en el cuerpo
+        self._functions.append(frame)
         self._loop_depth.append(0)   # break/continue no cruzan la frontera de la función
 
     def exit_function(self, node=None) -> None:
         frame = self._functions.pop()
+        if frame.en_clase:
+            self._classes.pop()   # sale del cuerpo del método: 'this' se apaga
         self._loop_depth.pop()
         self.table.exit_scope()
         frame.symbol.extra["captured"] = sorted(frame.captured)
@@ -201,6 +218,9 @@ class SemanticChecker:
             return self._fail(f"'{name}' no ha sido declarado", node)
         if symbol.kind != "function":
             return self._fail(f"'{name}' no es una función y no puede llamarse", node)
+        if symbol.extra.get("is_constructor"):
+            return self._fail(
+                f"el constructor '{name}' no puede llamarse directamente; usa 'new'", node)
         return self.check_arguments(symbol, arg_types, node)
 
     def check_arguments(self, symbol: Symbol, arg_types: list, node=None) -> str:
@@ -250,6 +270,174 @@ class SemanticChecker:
                 f"la condición de '{construct}' debe ser boolean, no '{ts.name(condition_type)}'",
                 node)
         return ts.BOOLEAN
+
+    # ------------------------------------------------------------------
+    # Clases y objetos
+    # ------------------------------------------------------------------
+
+    def declare_class(self, name: str, node=None, parent: str | None = None):
+        """Declara una clase en el ámbito actual y registra a su superclase."""
+        if parent is not None and self._clase_symbol(parent) is None:
+            self.errors.add(f"la clase '{parent}' no ha sido declarada", node)
+            parent = None
+        return self._insert(name, "class", name, node, parent=parent)
+
+    def enter_class(self, symbol: Symbol, node=None) -> None:
+        self.table.enter_scope("class", name=symbol.name)
+
+    def exit_class(self, node=None) -> None:
+        self.table.exit_scope()
+
+    def check_this(self, node=None) -> str:
+        """Tipo de 'this': la clase del método que se está recorriendo."""
+        if not self._classes:
+            return self._fail("'this' solo puede usarse dentro de un método de clase", node)
+        return self._classes[-1]
+
+    def _es_subclase(self, hijo: str, padre: str) -> bool:
+        """¿'hijo' hereda, directa o indirectamente, de 'padre'?"""
+        visitados: set[str] = set()
+        clase = self._clase_symbol(hijo)
+        while clase is not None:
+            if clase.name == padre:
+                return True
+            if clase.name in visitados:      # herencia circular (defensivo)
+                return False
+            visitados.add(clase.name)
+            base = clase.extra.get("parent")
+            clase = self._clase_symbol(base) if base else None
+        return False
+
+    def _clase_symbol(self, tipo: str) -> Symbol | None:
+        """Símbolo de la clase cuyo nombre es 'tipo' (solo se declaran global)."""
+        if not ts.is_class(tipo):
+            return None
+        return self.table.global_scope.resolve_local(tipo)
+
+    def _scope_clase(self, tipo_clase: str):
+        """Ámbito (Scope) de la clase, buscado entre los hijos del global."""
+        for hijo in self.table.global_scope.children:
+            if hijo.kind == "class" and hijo.name == tipo_clase:
+                return hijo
+        return None
+
+    def _resolver_miembro(self, tipo_clase: str, miembro: str) -> Symbol | None:
+        """Busca un miembro (atributo o método) subiendo por la herencia."""
+        clase = self._clase_symbol(tipo_clase)
+        while clase is not None:
+            scope = self._scope_clase(clase.name)
+            symbol = scope.resolve_local(miembro) if scope is not None else None
+            if symbol is not None:
+                return symbol
+            base = clase.extra.get("parent")
+            clase = self._clase_symbol(base) if base else None
+        return None
+
+    def _buscar_constructor(self, tipo_clase: str) -> Symbol | None:
+        """Constructor de la clase: el suyo o, si no lo define, el heredado."""
+        return self._resolver_miembro(tipo_clase, "constructor")
+
+    def check_member_access(self, object_type: str, member: str, node=None) -> str:
+        """Tipo de un atributo accedido con 'objeto.atributo'."""
+        if not ts.is_class(object_type):
+            return self._fail(
+                f"'{member}' no puede accederse: '{ts.name(object_type)}' no es una clase",
+                node)
+        symbol = self._resolver_miembro(object_type, member)
+        if symbol is None:
+            return self._fail(
+                f"la clase '{object_type}' no tiene un miembro llamado '{member}'", node)
+        if symbol.kind == "function":
+            return self._fail(
+                f"'{member}' es un método de '{object_type}'; llámalo con paréntesis",
+                node)
+        return symbol.type if symbol.type is not None else ts.ERROR
+
+    def check_member_call(self, object_type: str, member: str, arg_types: list,
+                          node=None) -> str:
+        """Resultado de 'objeto.metodo(args)'."""
+        if not ts.is_class(object_type):
+            return self._fail(
+                f"'{member}' no puede llamarse: '{ts.name(object_type)}' no es una clase",
+                node)
+        symbol = self._resolver_miembro(object_type, member)
+        if symbol is None:
+            return self._fail(
+                f"la clase '{object_type}' no tiene un método llamado '{member}'", node)
+        if symbol.kind != "function":
+            return self._fail(
+                f"'{member}' no es un método de '{object_type}' y no puede llamarse",
+                node)
+        if symbol.extra.get("is_constructor"):
+            return self._fail(
+                f"el constructor no puede llamarse sobre un objeto; se invoca con 'new'",
+                node)
+        return self.check_arguments(symbol, arg_types, node)
+
+    def check_new(self, class_name: str, arg_types: list, node=None) -> str:
+        """'new Clase(args)': valida contra el constructor y devuelve 'Clase'."""
+        clase = self._clase_symbol(class_name)
+        if clase is None:
+            return self._fail(f"la clase '{class_name}' no ha sido declarada", node)
+        constructor = self._buscar_constructor(class_name)
+        if constructor is not None:
+            self.check_arguments(constructor, arg_types, node)
+        elif arg_types:
+            self.errors.add(
+                f"la clase '{class_name}' no define un constructor que acepte "
+                f"{len(arg_types)} argumento(s)", node)
+        return clase.name
+
+    def check_property_assign(self, object_type: str, member: str, value_type,
+                              node=None) -> str:
+        """Asignación 'objeto.atributo = valor'."""
+        if not ts.is_class(object_type):
+            return self._fail(
+                f"no se puede asignar a '{member}': '{ts.name(object_type)}' "
+                f"no es una clase", node)
+        symbol = self._resolver_miembro(object_type, member)
+        if symbol is None:
+            return self._fail(
+                f"la clase '{object_type}' no tiene un miembro llamado '{member}'", node)
+        if symbol.kind == "function":
+            return self._fail(
+                f"'{member}' es un método de '{object_type}' y no puede asignarse",
+                node)
+        if symbol.kind == "constant":
+            return self._fail(f"no se puede reasignar la constante '{member}'", node)
+        target = symbol.type
+        if target is None:                      # atributo sin tipo: se infiere aquí
+            symbol.type = value_type
+            symbol.extra["is_initialized"] = True
+            return value_type
+        if not self.check_compatible(target, value_type,
+                                     f"no se puede asignar a '{object_type}.{member}'",
+                                     node):
+            return ts.ERROR
+        return target
+
+    def check_index(self, container_type, index_type, node=None) -> str:
+        """'arreglo[índice]' -> tipo del elemento; el índice debe ser integer."""
+        if not ts.is_array(container_type):
+            return self._fail(
+                f"no se puede indexar: '{ts.name(container_type)}' no es un arreglo",
+                node)
+        if index_type not in (None, ts.ERROR) and index_type != ts.INTEGER:
+            self.errors.add(
+                f"el índice de un arreglo debe ser de tipo 'integer', no "
+                f"'{ts.name(index_type)}'", node)
+        return ts.element_type(container_type)
+
+    def check_index_assign(self, container_type, index_type, value_type, node=None) -> str:
+        """Asignación 'arreglo[índice] = valor'."""
+        element = self.check_index(container_type, index_type, node)
+        if ts.is_error(element):
+            return ts.ERROR
+        if not self.check_compatible(element, value_type,
+                                     "no se puede asignar a un elemento del arreglo",
+                                     node):
+            return ts.ERROR
+        return element
 
     def check_switch_case(self, subject_type, case_type, node=None) -> None:
         """El switch no evalúa un boolean: cada 'case' debe ser comparable con
