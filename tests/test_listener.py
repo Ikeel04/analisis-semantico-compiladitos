@@ -75,8 +75,8 @@ class BasePipeline(unittest.TestCase):
 
 class TestProgramasValidos(BasePipeline):
 
-    def test_programa_media_ok_media(self):
-        codigo = open(os.path.join(RUTA_EJEMPLOS, "ok_media.cps")).read()
+    def test_programa_semantica_ok_semantica(self):
+        codigo = open(os.path.join(RUTA_EJEMPLOS, "ok_semantica.cps")).read()
         self.assertValido(self.analizar(codigo))
 
     def test_clases_objetos_y_listas(self):
@@ -449,6 +449,59 @@ class TestSinErroresSemanticos(BasePipeline):
         resultado = self.analizar('var x = ;')
         self.assertEqual(self.semantico(resultado), [])
         self.assertTrue(any(e.tipo == "Sintáctico" for e in resultado.errores))
+
+
+class TestEjemplosDeLaRubrica(BasePipeline):
+    """Los ejemplos del repo son la demostración de la rúbrica: no deben
+    degradarse sin que los tests se enteren."""
+
+    def _leer(self, nombre):
+        with open(os.path.join(RUTA_EJEMPLOS, nombre), encoding="utf-8") as f:
+            return f.read()
+
+    def test_ok_semantica_es_valido(self):
+        self.assertValido(self.analizar(self._leer("ok_semantica.cps")))
+
+    def test_ok_semantica_construye_ambitos(self):
+        resultado = self.analizar(self._leer("ok_semantica.cps"))
+        ambitos = [fila["Ámbito"] for fila in resultado.ambitos]
+        self.assertTrue(any(a.startswith("[global]") for a in ambitos))
+        self.assertTrue(any("[class] Empleado" in a for a in ambitos))
+        self.assertTrue(any("[function] factorial" in a for a in ambitos))
+        self.assertTrue(any("[function] contador" in a for a in ambitos))
+        self.assertTrue(any("[function] interno" in a for a in ambitos))
+        self.assertTrue(any("[block]" in a for a in ambitos))
+
+    def test_errores_semanticos_baja_son_solo_semanticos(self):
+        resultado = self.analizar(self._leer("errores_semanticos_baja.cps"))
+        self.assertFalse(resultado.es_valido)
+        self.assertEqual({e.tipo for e in resultado.errores}, {"Semántico"})
+        mensajes = self.semantico(resultado)
+        self.assertEqual(len(mensajes), 5)
+
+    def test_errores_semanticos_baja_mensajes(self):
+        self.assertErrorSemantico(self._leer("errores_semanticos_baja.cps"),
+                                  "se esperaba 'integer' y se recibió 'string'")
+        self.assertErrorSemantico(self._leer("errores_semanticos_baja.cps"),
+                                  "'nombreInexistente' no ha sido declarado")
+        self.assertErrorSemantico(self._leer("errores_semanticos_baja.cps"),
+                                  "el índice de un arreglo debe ser de tipo 'integer'")
+
+    def test_errores_semanticos_media_son_solo_semanticos(self):
+        resultado = self.analizar(self._leer("errores_semanticos_media.cps"))
+        self.assertFalse(resultado.es_valido)
+        self.assertEqual({e.tipo for e in resultado.errores}, {"Semántico"})
+        mensajes = self.semantico(resultado)
+        self.assertEqual(len(mensajes), 7)
+
+    def test_errores_semanticos_media_mensajes(self):
+        codigo = self._leer("errores_semanticos_media.cps")
+        self.assertErrorSemantico(codigo, "argumento 1 ('n') de 'factorial'")
+        self.assertErrorSemantico(codigo, "argumento 1 ('cantidad') de 'depositar'")
+        self.assertErrorSemantico(codigo, "la condición de 'if' debe ser boolean")
+        self.assertErrorSemantico(codigo, "no puede imprimir una expresión de tipo 'void'")
+        self.assertErrorSemantico(codigo, "comparación sin sentido: 'uno' se compara consigo misma")
+        self.assertErrorSemantico(codigo, "el 'case' con valor '1' ya fue declarado")
 
 
 if __name__ == "__main__":

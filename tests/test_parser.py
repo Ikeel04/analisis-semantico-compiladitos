@@ -107,10 +107,10 @@ class TestPipeline(unittest.TestCase):
         filas = [(e.linea, e.columna) for e in r.errores]
         self.assertEqual(filas, sorted(filas))
 
-    def test_ok_media_del_repo_es_valido(self):
-        ruta = os.path.join(_PROYECTO, "ejemplos", "ok_media.cps")
+    def test_ok_semantica_del_repo_es_valido(self):
+        ruta = os.path.join(_PROYECTO, "ejemplos", "ok_semantica.cps")
         with open(ruta, encoding="utf-8") as f:
-            r = analizar_codigo("ok_media.cps", f.read())
+            r = analizar_codigo("ok_semantica.cps", f.read())
         self.assertTrue(r.es_valido, [str(e) for e in r.errores])
         self.assertGreater(len(r.tokens), 0)
 
