@@ -265,6 +265,96 @@ class TestClasesYObjetos(BasePipeline):
             "la clase 'Fantasma' no ha sido declarada")
 
 
+class TestReglasGenerales(BasePipeline):
+
+    def test_codigo_muerto_despues_de_return(self):
+        self.assertErrorSemantico(
+            'function f(): integer { return 1; var x: integer = 2; }',
+            "código inalcanzable")
+
+    def test_codigo_muerto_despues_de_break(self):
+        self.assertErrorSemantico(
+            'function f(flag: boolean) { while (flag) { break; print("x"); } }',
+            "código inalcanzable")
+
+    def test_codigo_muerto_despues_de_continue(self):
+        self.assertErrorSemantico(
+            'function f() { for (var i: integer = 0; i < 3; i = i + 1) '
+            '{ continue; print("x"); } }',
+            "código inalcanzable")
+
+    def test_return_dentro_de_if_no_mata_el_resto(self):
+        self.assertValido(self.analizar(
+            'function f(x: integer): integer { if (x > 0) { return 1; } '
+            'var y: integer = 2; return y; }'))
+
+    def test_case_duplicado_en_switch(self):
+        self.assertErrorSemantico(
+            'function f(n: integer) { switch (n) { case 1: print("a"); '
+            'case 1: print("b"); } }',
+            "el 'case' con valor '1' ya fue declarado en este switch")
+
+    def test_case_distintos_en_switch_no_es_error(self):
+        self.assertValido(self.analizar(
+            'function f(n: integer) { switch (n) { case 1: print("a"); '
+            'case 2: print("b"); } }'))
+
+    def test_autocomparaciones_sin_sentido(self):
+        self.assertErrorSemantico(
+            'function f(a: integer) { var x = a == a; }',
+            "comparación sin sentido: 'a' se compara consigo misma")
+        self.assertErrorSemantico(
+            'function f(a: integer) { var x = a != a; }',
+            "comparación sin sentido: 'a' se compara consigo misma")
+
+    def test_comparacion_de_variables_distintas_es_valida(self):
+        self.assertValido(self.analizar(
+            'function f(a: integer, b: integer) { var x = a == b; }'))
+
+    def test_division_por_literal_cero(self):
+        self.assertErrorSemantico(
+            'function f(a: integer) { var x = a / 0; }',
+            "división por cero")
+
+    def test_modulo_por_literal_cero(self):
+        self.assertErrorSemantico(
+            'function f(a: integer) { var x = a % 0; }',
+            "módulo por cero")
+
+    def test_division_por_literal_no_cero_es_valida(self):
+        self.assertValido(self.analizar(
+            'function f(a: integer) { var x = a / 2; }'))
+
+    def test_condicion_literal_en_if(self):
+        self.assertErrorSemantico(
+            'function f() { if (true) { print("x"); } }',
+            "la condición de 'if' es una constante ('true')")
+
+    def test_condicion_literal_en_while(self):
+        self.assertErrorSemantico(
+            'function f() { while (false) { } }',
+            "la condición de 'while' es una constante ('false')")
+
+    def test_condicion_literal_en_for(self):
+        self.assertErrorSemantico(
+            'function f() { for (; true;) { } }',
+            "la condición de 'for' es una constante ('true')")
+
+    def test_condicion_con_variable_no_es_error(self):
+        self.assertValido(self.analizar(
+            'function f(flag: boolean) { if (flag) { print("x"); } }'))
+
+    def test_print_de_expression_void(self):
+        self.assertErrorSemantico(
+            'function vacia() { }'
+            'function f() { print(vacia()); }',
+            "'print' no puede imprimir una expresión de tipo 'void'")
+
+    def test_print_de_valor_normal_no_es_error(self):
+        self.assertValido(self.analizar(
+            'function f() { print(42); }'))
+
+
 class TestSinErroresSemanticos(BasePipeline):
 
     def test_codigo_con_error_sintactico_no_genera_semanticos(self):

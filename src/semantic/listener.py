@@ -43,6 +43,7 @@ class SemanticListener(CompiscriptListener):
         self.tipo_de: dict[int, object] = {}      # tipo por nodo de expresión
         self._nombres: dict[int, str] = {}        # nombre de cada identificador
         self._destino: dict[int, tuple] = {}      # cómo se asigna cada lhs
+        self._secuencias: list[bool] = []         # flujo terminado por lista de sentencias
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -83,6 +84,35 @@ class SemanticListener(CompiscriptListener):
             tipos[i + 1] = metodo(op, tipos[i], tipos[i + 1], ctx)
         self.tipo_de[id(ctx)] = tipos[-1]
 
+    def _terminar_secuencia(self) -> None:
+        """Marca la lista de sentencias actual como terminada (return/break/continue)."""
+        if self._secuencias:
+            self._secuencias[-1] = True
+
+    def _condicion(self, ctx_expr, constructo: str):
+        """Tipa una condición y, si es un literal verdadero/falso, lo reporta."""
+        if ctx_expr.getText() in ("true", "false"):
+            self.checker.errors.add(
+                f"la condición de '{constructo}' es una constante "
+                f"('{ctx_expr.getText()}')", ctx_expr)
+        return self.checker.check_condition(self._tipo_de(ctx_expr), constructo,
+                                            ctx_expr)
+
+    # ------------------------------------------------------------------
+    # Programa y secuencias de sentencias (código inalcanzable)
+    # ------------------------------------------------------------------
+
+    def enterProgram(self, ctx):
+        self._secuencias.append(False)
+
+    def exitProgram(self, ctx):
+        self._secuencias.pop()
+
+    def enterStatement(self, ctx):
+        if self._secuencias and self._secuencias[-1]:
+            self.checker.errors.add(
+                "código inalcanzable: esta sentencia nunca se ejecuta", ctx)
+
     # ------------------------------------------------------------------
     # Expresiones
     # ------------------------------------------------------------------
@@ -98,8 +128,7 @@ class SemanticListener(CompiscriptListener):
         if not ramas:                      # sin '?': solo una expresión simple
             self.tipo_de[id(ctx)] = self._tipo_de(ctx.logicalOrExpr())
             return
-        self.checker.check_condition(
-            self._tipo_de(ctx.logicalOrExpr()), "ternario", ctx)
+        self._condicion(ctx.logicalOrExpr(), "ternario")
         a, b = self._tipo_de(ramas[0]), self._tipo_de(ramas[1])
         if ts.is_error(a) or ts.is_error(b):
             self.tipo_de[id(ctx)] = ts.ERROR
@@ -120,8 +149,17 @@ class SemanticListener(CompiscriptListener):
                      self._operadores(ctx, {"&&"}), self.checker.logical)
 
     def exitEqualityExpr(self, ctx):
-        self._plegar(ctx, ctx.relationalExpr(),
-                     self._operadores(ctx, {"==", "!="}), self.checker.comparison)
+        hijos = ctx.relationalExpr()
+        ops = self._operadores(ctx, {"==", "!="})
+        tipos = [self._tipo_de(h) for h in hijos]
+        for i, op in enumerate(ops):
+            if hijos[i].getText() == hijos[i + 1].getText():
+                self.checker.errors.add(
+                    f"comparación sin sentido: '{hijos[i].getText()}' "
+                    f"se compara consigo misma", ctx)
+            tipos[i + 1] = self.checker.comparison(
+                op, tipos[i], tipos[i + 1], ctx)
+        self.tipo_de[id(ctx)] = tipos[-1]
 
     def exitRelationalExpr(self, ctx):
         self._plegar(ctx, ctx.additiveExpr(),
@@ -133,8 +171,16 @@ class SemanticListener(CompiscriptListener):
                      self._operadores(ctx, {"+", "-"}), self.checker.arithmetic)
 
     def exitMultiplicativeExpr(self, ctx):
-        self._plegar(ctx, ctx.unaryExpr(),
-                     self._operadores(ctx, {"*", "/", "%"}), self.checker.arithmetic)
+        hijos = ctx.unaryExpr()
+        ops = self._operadores(ctx, {"*", "/", "%"})
+        tipos = [self._tipo_de(h) for h in hijos]
+        for i, op in enumerate(ops):
+            if op in ("/", "%") and hijos[i + 1].getText() == "0":
+                self.checker.errors.add(
+                    f"{'división' if op == '/' else 'módulo'} por cero: "
+                    f"el divisor es el literal '0'", ctx)
+            tipos[i + 1] = self.checker.arithmetic(op, tipos[i], tipos[i + 1], ctx)
+        self.tipo_de[id(ctx)] = tipos[-1]
 
     def exitUnaryExpr(self, ctx):
         primaria = ctx.primaryExpr()
@@ -314,20 +360,23 @@ class SemanticListener(CompiscriptListener):
         self._tipo_de(ctx.expression())
 
     def exitPrintStatement(self, ctx):
-        self._tipo_de(ctx.expression())
+        tipo = self._tipo_de(ctx.expression())
+        if tipo == ts.VOID:
+            self.checker.errors.add(
+                "'print' no puede imprimir una expresión de tipo 'void'", ctx)
 
     def exitIfStatement(self, ctx):
-        self.checker.check_condition(self._tipo_de(ctx.expression()), "if", ctx)
+        self._condicion(ctx.expression(), "if")
 
     def exitWhileStatement(self, ctx):
-        self.checker.check_condition(self._tipo_de(ctx.expression()), "while", ctx)
+        self._condicion(ctx.expression(), "while")
         self.checker.exit_loop()
 
     def enterWhileStatement(self, ctx):
         self.checker.enter_loop()
 
     def exitDoWhileStatement(self, ctx):
-        self.checker.check_condition(self._tipo_de(ctx.expression()), "do-while", ctx)
+        self._condicion(ctx.expression(), "do-while")
         self.checker.exit_loop()
 
     def enterDoWhileStatement(self, ctx):
@@ -354,7 +403,7 @@ class SemanticListener(CompiscriptListener):
         # el init está vacío y la condición también ('for (;; iteracion)',
         # donde van dos ';' antes de la primera expresión).
         if primero is not None and primero[1] <= 1:
-            self.checker.check_condition(self._tipo_de(primero[0]), "for", ctx)
+            self._condicion(primero[0], "for")
 
     def enterForeachStatement(self, ctx):
         self.checker.enter_loop()
@@ -362,24 +411,39 @@ class SemanticListener(CompiscriptListener):
     def exitForeachStatement(self, ctx):
         self.checker.exit_loop()
 
+    def enterSwitchStatement(self, ctx):
+        self.checker.enter_switch(ctx)
+
+    def enterSwitchCase(self, ctx):
+        self._secuencias.append(False)
+
+    def exitSwitchCase(self, ctx):
+        self._secuencias.pop()
+
     def exitSwitchStatement(self, ctx):
         sujeto = self._tipo_de(ctx.expression())
         for caso in ctx.switchCase():
             self.checker.check_switch_case(sujeto,
-                                           self._tipo_de(caso.expression()), caso)
+                                           self._tipo_de(caso.expression()), caso,
+                                           caso.expression().getText())
+        self.checker.exit_switch(ctx)
 
     def exitReturnStatement(self, ctx):
         expr = ctx.expression()
         self.checker.check_return(self._tipo_de(expr) if expr is not None else None,
                                   ctx)
+        self._terminar_secuencia()
 
     def enterBreakStatement(self, ctx):
         self.checker.check_break(ctx)
+        self._terminar_secuencia()
 
     def enterContinueStatement(self, ctx):
         self.checker.check_continue(ctx)
+        self._terminar_secuencia()
 
     def enterBlock(self, ctx):
+        self._secuencias.append(False)
         if self._es_cuerpo_de_funcion(ctx):
             return
         self.checker.table.enter_scope("block")
@@ -393,5 +457,6 @@ class SemanticListener(CompiscriptListener):
             self.checker.declare_variable(nombre, ts.STRING, ts.STRING, ctx)
 
     def exitBlock(self, ctx):
+        self._secuencias.pop()
         if not self._es_cuerpo_de_funcion(ctx):
             self.checker.table.exit_scope()

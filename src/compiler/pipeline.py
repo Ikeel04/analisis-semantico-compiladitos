@@ -71,6 +71,8 @@ class ResultadoAnalisis:
     tokens: list[Token] = field(default_factory=list)
     arbol: str = ""                    # Árbol como texto (notación con paréntesis).
     arbol_estructura: list = None      # [texto, [hijos]] para dibujarlo como imagen.
+    ambitos: list[dict] = field(default_factory=list)  # filas de la pestaña Ámbitos.
+    ambitos_texto: str = ""            # descripción textual del árbol de ámbitos.
 
     @property
     def es_valido(self) -> bool:
@@ -99,6 +101,11 @@ def analizar_codigo(nombre: str, codigo: str) -> ResultadoAnalisis:
             FilaError("Semántico", e.line, e.column, "", e.message)
             for e in listener.checker.errors.issues
         ]
+        ambitos = listener.checker.table.filas_para_ide()
+        ambitos_texto = listener.checker.table.describe_tree()
+    else:
+        ambitos = []
+        ambitos_texto = ""
 
     errores.sort(key=lambda e: (e.linea, e.columna, e.tipo))
 
@@ -108,4 +115,6 @@ def analizar_codigo(nombre: str, codigo: str) -> ResultadoAnalisis:
         tokens=lexico.tokens,
         arbol=arbol_a_texto(sintactico.arbol),
         arbol_estructura=arbol_a_estructura(sintactico.arbol),
+        ambitos=ambitos,
+        ambitos_texto=ambitos_texto,
     )

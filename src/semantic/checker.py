@@ -35,7 +35,8 @@ class SemanticChecker:
         self.is_subclass = is_subclass or self._es_subclase  # hook de herencia (clases)
         self._functions: list[_FunctionFrame] = []
         self._loop_depth: list[int] = [0]       # un contador por función
-        self._classes: list[str] = []           # tipos de las clases cuyo método se recorre ('this')
+        self._classes: list[str] = []           # tipos de la clase cuyo método se recorre ('this')
+        self._switch_cases: list[list[str]] = []  # textos de 'case' por switch activo
 
     def _fail(self, message: str, node) -> str:
         self.errors.add(message, node)
@@ -439,9 +440,25 @@ class SemanticChecker:
             return ts.ERROR
         return element
 
-    def check_switch_case(self, subject_type, case_type, node=None) -> None:
+    def enter_switch(self, node=None) -> None:
+        """Inicia el seguimiento de los 'case' de un switch (para duplicados)."""
+        self._switch_cases.append([])
+
+    def exit_switch(self, node=None) -> None:
+        if self._switch_cases:
+            self._switch_cases.pop()
+
+    def check_switch_case(self, subject_type, case_type, node=None, text=None) -> None:
         """El switch no evalúa un boolean: cada 'case' debe ser comparable con
-        la expresión que evalúa el switch."""
+        la expresión que evalúa el switch. Si `text` se pasa y ya apareció en
+        este mismo switch, reporta un 'case' duplicado."""
+        if text is not None and self._switch_cases:
+            if text in self._switch_cases[-1]:
+                self.errors.add(
+                    f"el 'case' con valor '{text}' ya fue declarado en este switch",
+                    node)
+            else:
+                self._switch_cases[-1].append(text)
         if ts.comparison("==", subject_type, case_type, self.is_subclass) is None:
             self.errors.add(
                 f"el 'case' de tipo '{ts.name(case_type)}' no es comparable con el "

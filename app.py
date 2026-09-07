@@ -1,8 +1,10 @@
 """Interfaz gráfica de Compiscript con Streamlit.
 
 Permite seleccionar un archivo .cps, escribir código directamente o cargar un
-ejemplo, y ejecutar el análisis con el botón «Compilar». Los errores y el
-árbol sintáctico se muestran en la interfaz (editor, pestañas), no en consola.
+ejemplo, y ejecutar el análisis con el botón «Compilar». Los tres analizadores
+(léxico, sintáctico y semántico) corren juntos: sus errores se muestran en una
+tabla unificada y el árbol sintáctico y los ámbitos (tabla de símbolos) también
+tienen su pestaña en la interfaz.
 
 Uso:
     streamlit run app.py
@@ -145,7 +147,7 @@ st.session_state.setdefault("analizado", None)
 
 with st.sidebar:
     st.header("Compiscript")
-    st.caption("Analizador léxico y sintáctico")
+    st.caption("Analizador léxico, sintáctico y semántico")
 
     subido = st.file_uploader("Abrir archivo .cps", type=["cps"])
     if subido is not None:
@@ -196,8 +198,8 @@ resultado = st.session_state["resultado"]
 
 _mostrar_barra_estado(nombre, resultado, codigo)
 
-tab_editor, tab_errores, tab_tokens, tab_arbol = st.tabs(
-    ["Editor", "Errores", "Tokens", "Árbol"]
+tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol = st.tabs(
+    ["Editor", "Errores", "Tokens", "Ámbitos", "Árbol"]
 )
 
 with tab_editor:
@@ -217,13 +219,25 @@ with tab_errores:
     else:
         st.error(
             f"Se encontraron {len(resultado.errores)} error(es) "
-            "léxico(s) o sintáctico(s)."
+            "léxico(s), sintáctico(s) o semántico(s)."
         )
-        st.dataframe(
-            _tabla_de_errores(resultado.errores),
-            width="stretch",
-            hide_index=True,
+
+        col_total, col_lex, col_sin, col_sem = st.columns(4)
+        col_total.metric("Total", len(resultado.errores))
+        col_lex.metric("Léxicos", sum(1 for e in resultado.errores if e.tipo == "Léxico"))
+        col_sin.metric("Sintácticos", sum(1 for e in resultado.errores if e.tipo == "Sintáctico"))
+        col_sem.metric("Semánticos", sum(1 for e in resultado.errores if e.tipo == "Semántico"))
+
+        tipo = st.radio(
+            "Filtrar por tipo",
+            ["Todos", "Léxico", "Sintáctico", "Semántico"],
+            horizontal=True,
+            label_visibility="collapsed",
         )
+        filas = _tabla_de_errores(resultado.errores)
+        if tipo != "Todos":
+            filas = [fila for fila in filas if fila["Tipo"] == tipo]
+        st.dataframe(filas, width="stretch", hide_index=True)
 
 with tab_tokens:
     if resultado is None:
@@ -236,6 +250,20 @@ with tab_tokens:
         )
     else:
         st.write("No se reconoció ningún token.")
+
+with tab_ambitos:
+    if resultado is None:
+        st.info("Pulsa «Compilar» para revisar los ámbitos y la tabla de símbolos.")
+    elif resultado.ambitos:
+        st.caption(
+            "Árbol de ámbitos del análisis semántico: global, funciones, clases y bloques. "
+            "Cada ámbito muestra sus símbolos con tipo."
+        )
+        st.dataframe(resultado.ambitos, width="stretch", hide_index=True)
+        with st.expander("Ver los ámbitos como texto"):
+            st.code(resultado.ambitos_texto, language="text")
+    else:
+        st.write("El análisis semántico no produjo ámbitos (¿el código tiene errores?).")
 
 with tab_arbol:
     if resultado is None:

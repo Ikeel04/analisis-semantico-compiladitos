@@ -137,3 +137,20 @@ class SymbolTable:
         for child in scope.children:
             lines.append(self.describe_tree(child, indent + 1))
         return "\n".join(lines)
+
+    def filas_para_ide(self, scope: Scope | None = None, profundidad: int = 0) -> list[dict]:
+        """Filas para la pestaña «Ámbitos» del IDE: una fila por ámbito, con sus
+        símbolos y el tipo de cada uno. La sangría del texto indica la jerarquía."""
+        scope = scope or self.global_scope
+        filas = []
+        etiqueta = ("  " * profundidad) + f"[{scope.kind}]"
+        if scope.name:
+            etiqueta += f" {scope.name}"
+        simbolos = "; ".join(
+            f"{nombre} ({sym.kind} · {sym.type})"
+            for nombre, sym in sorted(scope.symbols.items())
+        ) or "—"
+        filas.append({"Ámbito": etiqueta, "Símbolos": simbolos})
+        for hijo in scope.children:
+            filas += self.filas_para_ide(hijo, profundidad + 1)
+        return filas

@@ -331,3 +331,32 @@ class TestArreglosConHerencia(BaseChecker):
     def test_arreglo_literal_homogeneo_de_clase(self):
         self.assertEqual(self.c.array_literal(["Circulo", "Circulo"]), "Circulo[]")
         self.assertSinErrores()
+
+
+class TestSwitch(BaseChecker):
+    """Casos duplicados dentro de un mismo switch."""
+
+    def test_case_duplicado(self):
+        self.c.enter_switch()
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="1")
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="2")
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="1")
+        self.c.exit_switch()
+        self.assertMensaje("el 'case' con valor '1' ya fue declarado en este switch")
+        self.assertErrores(1)
+
+    def test_case_distintos_no_son_error(self):
+        self.c.enter_switch()
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="1")
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="2")
+        self.c.exit_switch()
+        self.assertSinErrores()
+
+    def test_switch_distintos_no_comparten_casos(self):
+        self.c.enter_switch()
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="1")
+        self.c.exit_switch()
+        self.c.enter_switch()
+        self.c.check_switch_case(ts.INTEGER, ts.INTEGER, text="1")
+        self.c.exit_switch()
+        self.assertSinErrores()
