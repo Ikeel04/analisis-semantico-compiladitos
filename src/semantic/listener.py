@@ -389,10 +389,13 @@ class SemanticListener(CompiscriptListener):
 
     def enterForStatement(self, ctx):
         self.checker.enter_loop()
+        # En la gramática el inicializador del 'for' queda FUERA del bloque, así
+        # que el ciclo necesita su propio ámbito: la variable declarada ahí vive
+        # en la condición, la iteración y el cuerpo, pero no después del ciclo.
+        self.checker.table.enter_scope("block")
 
     def exitForStatement(self, ctx):
         self.checker.exit_loop()
-        vistos = 0
         punto_y_coma = 0
         primero = None
         for hijo in ctx.getChildren():
@@ -409,6 +412,7 @@ class SemanticListener(CompiscriptListener):
         # donde van dos ';' antes de la primera expresión).
         if primero is not None and primero[1] <= 1:
             self._condicion(primero[0], "for")
+        self.checker.table.exit_scope()   # se cierra después de tipar la condición
 
     def enterForeachStatement(self, ctx):
         self.checker.enter_loop()
@@ -433,19 +437,25 @@ class SemanticListener(CompiscriptListener):
                                            caso.expression().getText())
         self.checker.exit_switch(ctx)
 
+    # Los tres cortan el flujo, pero solo si son válidos: marcar como código
+    # inalcanzable lo que sigue a un 'break' o un 'return' que ya se reportó
+    # como fuera de lugar sería un error derivado que no aporta información.
+
     def exitReturnStatement(self, ctx):
         expr = ctx.expression()
+        dentro_de_funcion = self.checker.in_function
         self.checker.check_return(self._tipo_de(expr) if expr is not None else None,
                                   ctx)
-        self._terminar_secuencia()
+        if dentro_de_funcion:
+            self._terminar_secuencia()
 
     def enterBreakStatement(self, ctx):
-        self.checker.check_break(ctx)
-        self._terminar_secuencia()
+        if self.checker.check_break(ctx):
+            self._terminar_secuencia()
 
     def enterContinueStatement(self, ctx):
-        self.checker.check_continue(ctx)
-        self._terminar_secuencia()
+        if self.checker.check_continue(ctx):
+            self._terminar_secuencia()
 
     def enterBlock(self, ctx):
         self._secuencias.append(False)

@@ -493,10 +493,22 @@ class SemanticChecker:
     def in_loop(self) -> bool:
         return self._loop_depth[-1] > 0
 
-    def check_break(self, node=None) -> None:
-        if not self.in_loop:
-            self.errors.add("'break' solo puede usarse dentro de un bucle", node)
+    @property
+    def in_function(self) -> bool:
+        """True si el recorrido va dentro del cuerpo de una función."""
+        return bool(self._functions)
 
-    def check_continue(self, node=None) -> None:
-        if not self.in_loop:
-            self.errors.add("'continue' solo puede usarse dentro de un bucle", node)
+    def check_break(self, node=None) -> bool:
+        """Devuelve True si el 'break' es válido; quien llama lo usa para no
+        encadenar errores derivados (código inalcanzable) sobre uno inválido."""
+        if self.in_loop:
+            return True
+        self.errors.add("'break' solo puede usarse dentro de un bucle", node)
+        return False
+
+    def check_continue(self, node=None) -> bool:
+        """Devuelve True si el 'continue' es válido (ver check_break)."""
+        if self.in_loop:
+            return True
+        self.errors.add("'continue' solo puede usarse dentro de un bucle", node)
+        return False
