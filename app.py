@@ -17,7 +17,7 @@ from pathlib import Path
 
 # Módulos flat de src/: se agregan las carpetas al path como en los tests.
 _BASE = Path(__file__).resolve().parent
-for _carpeta in ("src/parser", "src/lexico", "src/compiler", "src/ide"):
+for _carpeta in ("src/parser", "src/lexico", "src/compiler", "src/ide", "src/semantic"):
     _ruta = str(_BASE / _carpeta)
     if _ruta not in sys.path:
         sys.path.insert(0, _ruta)
@@ -27,6 +27,7 @@ import streamlit as st
 from arbol import figura_arbol
 from pipeline import MENSAJE_EXITO, FilaError, ResultadoAnalisis, analizar_codigo
 from analizador import Token
+from symbol_table import SymbolTable, SemanticError
 
 CARPETA_EJEMPLOS = _BASE / "ejemplos"
 
@@ -114,6 +115,65 @@ def _tabla_de_errores(errores: list[FilaError]):
     ]
 
 
+def _demo_tabla_simbolos() -> list[dict]:
+    """Recrea en vivo insertar/recuperar/actualizar/manejo de ámbitos sobre
+    una SymbolTable nueva, para la pestaña de demo. Cada paso trae el
+    fragmento de código ejecutado y el resultado obtenido."""
+    st_demo = SymbolTable()
+    pasos = []
+
+    def paso(seccion, codigo, resultado):
+        pasos.append({"seccion": seccion, "codigo": codigo, "resultado": resultado})
+
+    # 1) Insertar
+    sym = st_demo.insert("edad", "variable", type_="integer")
+    paso("Insertar", "insert('edad', 'variable', type_='integer')", f"OK -> {sym}")
+    try:
+        st_demo.insert("edad", "variable", type_="string")
+        paso("Insertar", "insert('edad', ...) otra vez, mismo ámbito", "no debería llegar aquí")
+    except SemanticError as e:
+        paso("Insertar", "insert('edad', ...) otra vez, mismo ámbito", f"Error esperado -> {e}")
+
+    # 2) Recuperar
+    paso("Recuperar", "lookup('edad')", str(st_demo.lookup("edad")))
+    paso("Recuperar", "lookup('no_existe')", str(st_demo.lookup("no_existe")))
+
+    # 3) Actualizar
+    tipo_antes = st_demo.lookup("edad").type
+    st_demo.update("edad", type_="float")
+    tipo_despues = st_demo.lookup("edad").type
+    paso("Actualizar", "update('edad', type_='float')", f"{tipo_antes} -> {tipo_despues}")
+    try:
+        st_demo.update("fantasma", type_="integer")
+        paso("Actualizar", "update('fantasma', ...)", "no debería llegar aquí")
+    except SemanticError as e:
+        paso("Actualizar", "update('fantasma', ...)", f"Error esperado -> {e}")
+
+    # 4) Manejo de ámbitos
+    st_demo.insert("global_var", "variable", type_="integer")
+    st_demo.enter_scope("function", name="calcular")
+    st_demo.insert("local_var", "variable", type_="integer")
+    paso(
+        "Manejo de ámbitos",
+        "enter_scope('function', 'calcular'); insert('local_var', ...)",
+        f"global_var visible: {st_demo.lookup('global_var')} | local_var: {st_demo.lookup('local_var')}",
+    )
+    st_demo.enter_scope("block", name="if-interno")
+    st_demo.insert("local_var", "variable", type_="string")
+    paso(
+        "Manejo de ámbitos",
+        "enter_scope('block'); insert('local_var', type_='string') (sombra)",
+        f"local_var dentro del bloque: {st_demo.lookup('local_var')}",
+    )
+    st_demo.exit_scope()
+    paso("Manejo de ámbitos", "exit_scope()  # sale del bloque", f"local_var: {st_demo.lookup('local_var')}")
+    st_demo.exit_scope()
+    paso("Manejo de ámbitos", "exit_scope()  # sale de la función", f"local_var: {st_demo.lookup('local_var')}")
+    paso("Árbol de ámbitos final", "describe_tree()", st_demo.describe_tree())
+
+    return pasos
+
+
 def _estado_badge(resultado: ResultadoAnalisis | None, codigo: str) -> tuple[str, str]:
     """Devuelve (clase css, texto) del estado actual del archivo."""
     if resultado is None:
@@ -198,8 +258,8 @@ resultado = st.session_state["resultado"]
 
 _mostrar_barra_estado(nombre, resultado, codigo)
 
-tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol = st.tabs(
-    ["Editor", "Errores", "Tokens", "Ámbitos", "Árbol"]
+tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_demo_ts = st.tabs(
+    ["Editor", "Errores", "Tokens", "Ámbitos", "Árbol", "Demo tabla de símbolos"]
 )
 
 with tab_editor:
@@ -274,3 +334,22 @@ with tab_arbol:
             st.code(resultado.arbol, language="text")
     else:
         st.write("No se pudo construir el árbol sintáctico.")
+
+with tab_demo_ts:
+    st.caption(
+        "Demo aislada de la tabla de símbolos (independiente del código del editor): "
+        "insertar, recuperar, actualizar y manejo de ámbitos, paso a paso."
+    )
+    pasos = _demo_tabla_simbolos()
+    secciones = {}
+    for p in pasos:
+        secciones.setdefault(p["seccion"], []).append(p)
+
+    for seccion, items in secciones.items():
+        st.subheader(seccion)
+        for item in items:
+            st.code(item["codigo"], language="python")
+            if item["seccion"] == "Árbol de ámbitos final":
+                st.code(item["resultado"], language="text")
+            else:
+                st.success(item["resultado"])
