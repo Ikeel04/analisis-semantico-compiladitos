@@ -25,10 +25,26 @@ con interfaz gráfica en Streamlit.
     (tras `return`/`break`/`continue`), `case` duplicado en `switch`,
     expresiones sin sentido (autocomparación, división/módulo por `0`,
     condición constante, `print` de `void`).
+- **Generación de código intermedio** (`src/intermediate/`):
+  - **Diseño del TAC** (`tac.py`): cuádruplos `(op, arg1, arg2, resultado)` y el
+    catálogo de instrucciones del lenguaje intermedio.
+  - **Temporales y etiquetas** (`temporales.py`): algoritmo de asignación y
+    **reciclaje** de temporales, y generador de etiquetas únicas.
+  - **Memoria** (`memoria.py`): direcciones por símbolo, tamaños, alineación y
+    **registros de activación** por función.
+  - **Infraestructura del generador** (`generador.py`): el estado compartido que
+    usan los generadores de expresiones, control de flujo, funciones y clases.
 - **Pipeline unificado** (`src/compiler/pipeline.py`): junta los errores de los
-  tres analizadores ordenados por línea y columna y expone los ámbitos finales.
+  tres analizadores ordenados por línea y columna, expone los ámbitos finales y
+  **genera el código intermedio solo si no hubo ningún error**.
 - **IDE** (`app.py`): editor, tabla unificada de errores con métricas y filtro,
   tabla de tokens, pestaña de ámbitos (tabla de símbolos) y árbol sintáctico.
+
+## Documentación
+
+- [`docs/DISENO_TAC.md`](docs/DISENO_TAC.md) — diseño del lenguaje intermedio:
+  juego de instrucciones, esquemas de traducción, algoritmo de reciclaje de
+  temporales, modelo de memoria, registros de activación y supuestos.
 
 ## Uso
 

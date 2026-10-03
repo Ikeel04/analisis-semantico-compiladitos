@@ -30,6 +30,13 @@ class Symbol:
         self.type = type_         # "integer", "string", "boolean", "Perro", "integer[]", etc.
         self.extra = extra        # info adicional: params, return_type, attributes, is_initialized...
 
+        # Memoria para la generación de código intermedio; la llena
+        # intermediate/memoria.asignar_direcciones() al terminar el semántico.
+        self.area = None          # "global" | "parametro" | "local" | "atributo"
+        self.offset = None        # desplazamiento en bytes dentro de su área
+        self.tamano = None
+        self.direccion = None     # "fp+16", "global+4", "obj+8"
+
     def __repr__(self):
         return f"Symbol(name={self.name!r}, kind={self.kind!r}, type={self.type!r}, extra={self.extra!r})"
 
@@ -43,6 +50,7 @@ class Scope:
         self.name = name          # nombre de la función/clase dueña del scope, si aplica
         self.symbols: dict[str, Symbol] = {}
         self.children: list["Scope"] = []
+        self.registro = None      # RegistroActivacion, solo en ámbitos de función
 
     def declare_here(self, symbol: Symbol) -> None:
         """Inserta en ESTE ámbito. Lanza error si ya existe (redeclaración)."""
@@ -140,17 +148,25 @@ class SymbolTable:
 
     def filas_para_ide(self, scope: Scope | None = None, profundidad: int = 0) -> list[dict]:
         """Filas para la pestaña «Ámbitos» del IDE: una fila por ámbito, con sus
-        símbolos y el tipo de cada uno. La sangría del texto indica la jerarquía."""
+        símbolos y el tipo de cada uno. La sangría del texto indica la jerarquía.
+        Las direcciones y la columna «Memoria» aparecen solo después de haber
+        corrido intermediate/memoria.asignar_direcciones()."""
         scope = scope or self.global_scope
         filas = []
         etiqueta = ("  " * profundidad) + f"[{scope.kind}]"
         if scope.name:
             etiqueta += f" {scope.name}"
-        simbolos = "; ".join(
-            f"{nombre} ({sym.kind} · {sym.type})"
-            for nombre, sym in sorted(scope.symbols.items())
-        ) or "—"
-        filas.append({"Ámbito": etiqueta, "Símbolos": simbolos})
+
+        def describir(sym: Symbol) -> str:
+            base = f"{sym.name} ({sym.kind} · {sym.type})"
+            return f"{base} @{sym.direccion}" if sym.direccion else base
+
+        ordenados = sorted(scope.symbols.items())
+        simbolos = "; ".join(describir(sym) for _, sym in ordenados) or "—"
+        memoria = ""
+        if scope.registro is not None:
+            memoria = f"marco de {scope.registro.tamano_total} b"
+        filas.append({"Ámbito": etiqueta, "Símbolos": simbolos, "Memoria": memoria})
         for hijo in scope.children:
             filas += self.filas_para_ide(hijo, profundidad + 1)
         return filas
