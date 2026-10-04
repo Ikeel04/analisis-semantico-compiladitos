@@ -113,7 +113,12 @@ class TestMemoriaSobreProgramasReales(BaseGeneracion):
         self.assertIn("suma", resultado.memoria.registros)
         registro = resultado.memoria.registros["suma"]
         self.assertEqual([s.name for s in registro.parametros], ["a", "b"])
-        self.assertEqual(registro.tamano_total, 24)   # 16 cabecera + 2 enteros
+        # 16 cabecera + 2 enteros + 1 temporal: al traducirse el
+        # cuerpo ('return a + b') el pool de la función tuvo un
+        # pico de 1 temporal, y salir_funcion lo reserva en el
+        # marco con fijar_temporales(pico) (DISENO_TAC.md §5).
+        self.assertEqual(registro.temporales, 1)
+        self.assertEqual(registro.tamano_total, 32)
 
     def test_los_metodos_y_las_funciones_anidadas_tienen_marco_propio(self):
         resultado = self.analizar(self.leer_ejemplo("ok_semantica.cps"))

@@ -14,6 +14,9 @@ SemanticListener recorre y llama a SemanticChecker:
 
 from __future__ import annotations
 
+from antlr4 import ParseTreeWalker
+
+from listener_tac import ListenerTAC
 from memoria import asignar_direcciones
 from tac import ProgramaTAC
 from temporales import GeneradorEtiquetas, PoolTemporales
@@ -115,13 +118,7 @@ def generar_codigo_intermedio(tabla, arbol) -> GeneradorTAC:
 
 
 def _traducir(generador: GeneradorTAC, arbol) -> None:
-    """Recorre el árbol emitiendo TAC.
-
-    Todavía sin implementar: aquí enganchan las Personas 2 (expresiones, control
-    de flujo, funciones) y 3 (arreglos, clases, herencia):
-
-        from antlr4 import ParseTreeWalker
-        from listener_tac import ListenerTAC
-        ParseTreeWalker.DEFAULT.walk(ListenerTAC(generador), arbol)
-    """
-    return None
+    """Recorre el árbol emitiendo TAC: el ListenerTAC traduce cada
+    nodo a llamadas del generador, igual que SemanticListener recorre
+    y llama al SemanticChecker."""
+    ParseTreeWalker.DEFAULT.walk(ListenerTAC(generador), arbol)

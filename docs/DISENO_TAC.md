@@ -49,6 +49,8 @@ Cada cuádruplo tiene además una forma impresa, cercana a la notación del
 | Instanciación | `(new, Perro, _, t1)` | `t1 = new Perro` |
 | Lectura de campo | `(=., p, nombre, t1)` | `t1 = p.nombre` |
 | Escritura de campo | `(.=, nombre, x, p)` | `p.nombre = x` |
+| Impresión | `(print, a, _, _)` | `print a` |
+| Longitud | `(length, a, _, t1)` | `t1 = length a` |
 | Comentario | `(#, texto, _, _)` | `# texto` |
 
 Las operaciones binarias usan como código el propio símbolo (`+`, `<`, `&&`,
@@ -71,6 +73,14 @@ Las etiquetas **no** se reciclan: una etiqueta es una posición del programa y
 reutilizar el nombre haría que un salto aterrizara en otro lado. Los nombres de
 función se cualifican con su clase o su función contenedora, de modo que dos
 métodos `sumar` de clases distintas no colisionen.
+
+**Operandos.** Un literal aparece tal cual (`42`, `2.5`, `"ana"`, `true`).
+Una variable se referencia por su **dirección** (`global+N`, `fp+N`, `obj+N`),
+la que `memoria.py` asigna a cada símbolo: el TAC es la entrada de la
+generación de código objeto, que trabaja con desplazamientos y no con nombres
+de fuente. Los temporales se referencian por su nombre (`tN`). Una instrucción
+lee sus argumentos antes de escribir el resultado, así que `t1 = t1 + 1` es
+válido y es la base del reciclaje.
 
 ---
 
@@ -119,6 +129,24 @@ ejecuta al menos una vez y el salto de regreso es un `if` en vez de un `goto`.
 Se traduce como un `while` con el inicializador antes de la etiqueta de inicio
 y el paso de iteración justo antes del salto de regreso, de modo que `continue`
 no se salte el incremento.
+
+### Ternario `? :`
+
+```
+             <código de la condición, deja el valor en t>
+             ifFalse t goto L1_ternario_sino
+             t_r = <rama verdadera>
+             goto L2_ternario_fin
+L1_ternario_sino:
+             t_r = <rama falsa>
+L2_ternario_fin:
+```
+
+Ambas ramas asignan al **mismo** temporal `t_r`, que es el valor de
+la expresión: no importa cuál se ejecutó, `t_r` queda con el
+resultado. El temporal del resultado se reserva antes de las dos
+asignaciones (está vivo en toda la construcción) y la condición se
+libera apenas se usa en el `ifFalse`.
 
 ### Llamada a función
 
@@ -389,6 +417,7 @@ el IDE aunque el programa todavía no compile.
 | `src/intermediate/temporales.py` | `PoolTemporales` (reciclaje), `GeneradorEtiquetas` |
 | `src/intermediate/memoria.py` | tamaños, alineación, direcciones, registros de activación |
 | `src/intermediate/generador.py` | `GeneradorTAC`: infraestructura compartida y punto de entrada |
+| `src/intermediate/listener_tac.py` | `ListenerTAC`: recorre el árbol y traduce a cuádruplos |
 | `src/semantic/symbol_table.py` | campos `area`, `offset`, `tamano`, `direccion` y `Scope.registro` |
 | `src/compiler/pipeline.py` | la compuerta |
 

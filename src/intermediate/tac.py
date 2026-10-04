@@ -56,6 +56,9 @@ NUEVO = "new"
 LEER_CAMPO = "=."
 ESCRIBIR_CAMPO = ".="      # (.=, campo, valor, objeto): el objeto es el destino
 
+PRINT = "print"            # (print, a, _, _): imprime el valor de a
+LONGITUD = "length"        # (length, a, _, t1): t1 = length a (tamaño del arreglo)
+
 COMENTARIO = "#"
 
 
@@ -111,6 +114,10 @@ class Cuadruplo:
             return f"{self.resultado} = {self.arg1}.{self.arg2}"
         if op == ESCRIBIR_CAMPO:
             return f"{self.resultado}.{self.arg1} = {self.arg2}"
+        if op == PRINT:
+            return f"print {self.arg1}"
+        if op == LONGITUD:
+            return f"{self.resultado} = length {self.arg1}"
         if op == COMENTARIO:
             return f"# {self.arg1}"
         return f"{op} {self.arg1} {self.arg2} {self.resultado}"
@@ -190,6 +197,12 @@ class ProgramaTAC:
 
     def emitir_escritura_campo(self, objeto, campo, valor) -> Cuadruplo:
         return self.emitir(ESCRIBIR_CAMPO, campo, valor, objeto)
+
+    def emitir_print(self, valor) -> Cuadruplo:
+        return self.emitir(PRINT, valor)
+
+    def emitir_longitud(self, arreglo, destino) -> Cuadruplo:
+        return self.emitir(LONGITUD, arreglo, None, destino)
 
     def emitir_comentario(self, texto) -> Cuadruplo:
         return self.emitir(COMENTARIO, texto)
