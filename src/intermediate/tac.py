@@ -49,6 +49,7 @@ PARAMETRO = "param"
 LLAMAR = "call"       # (call, nombre, cantidad_args, destino)
 RETORNAR = "return"
 
+NUEVO_ARREGLO = "newarray"  # (newarray, n, _, t1): t1 = newarray n (n elementos)
 LEER_INDICE = "=[]"
 ESCRIBIR_INDICE = "[]="    # (]=, indice, valor, arreglo): el arreglo es el destino
 
@@ -104,6 +105,8 @@ class Cuadruplo:
             return f"{self.resultado} = {llamada}" if self.resultado else llamada
         if op == RETORNAR:
             return "return" if self.arg1 is None else f"return {self.arg1}"
+        if op == NUEVO_ARREGLO:
+            return f"{self.resultado} = newarray {self.arg1}"
         if op == LEER_INDICE:
             return f"{self.resultado} = {self.arg1}[{self.arg2}]"
         if op == ESCRIBIR_INDICE:
@@ -182,6 +185,10 @@ class ProgramaTAC:
 
     def emitir_retorno(self, valor=None) -> Cuadruplo:
         return self.emitir(RETORNAR, valor)
+
+    def emitir_nuevo_arreglo(self, tamano, destino) -> Cuadruplo:
+        """Reserva un arreglo de `tamano` elementos y deja su referencia en destino."""
+        return self.emitir(NUEVO_ARREGLO, tamano, None, destino)
 
     def emitir_lectura_indice(self, arreglo, indice, destino) -> Cuadruplo:
         return self.emitir(LEER_INDICE, arreglo, indice, destino)

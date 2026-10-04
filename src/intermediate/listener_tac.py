@@ -54,6 +54,10 @@ class ListenerTAC(CompiscriptListener):
         self._ciclos: list[dict] = []         # while, do-while, for, foreach
         self._switchs: list[dict] = []        # switch
         self._trys: list[dict] = []           # try / catch
+        # Destinos de asignación ya resueltos: id(leftHandSide) ->
+        # (arreglo, índice). Los llena exitLeftHandSide y los consume
+        # exitAssignExpr, que es quien emite la escritura.
+        self._lvalor: dict[int, tuple[str, str]] = {}
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -303,8 +307,21 @@ class ListenerTAC(CompiscriptListener):
             self.valor_de[id(ctx)] = ctx.getChild(0).getText()
 
     def exitArrayLiteral(self, ctx):
-        self.valor_de[id(ctx)] = self._gancho(
-            "arreglo literal", ctx)
+        """[a, b, c] -> t = newarray 3; t[0] = a; t[1] = b; t[2] = c.
+
+        El temporal del arreglo se pide ANTES de liberar los elementos:
+        si no, podría reciclar el temporal de un elemento y el newarray
+        lo pisaría antes de escribirlo en su posición.
+        """
+        elementos = [self._valor(e) for e in ctx.expression()]
+        programa = self.gen.programa
+        arreglo = self.gen.nuevo_temporal()
+        programa.emitir_nuevo_arreglo(len(elementos), arreglo)
+        for posicion, elemento in enumerate(elementos):
+            programa.emitir_escritura_indice(arreglo, str(posicion),
+                                             elemento)
+        self.gen.liberar(*reversed(elementos))
+        self.valor_de[id(ctx)] = arreglo
 
     def exitPrimaryExpr(self, ctx):
         hijo = ctx.getChild(0)
@@ -365,9 +382,42 @@ class ListenerTAC(CompiscriptListener):
                                CompiscriptParser.CallExprContext)):
             self.valor_de[id(ctx)] = self._traducir_llamada(
                 atomo, sufijos[0])
+        elif (isinstance(atomo, CompiscriptParser.IdentifierExprContext)
+                and all(isinstance(s, CompiscriptParser.IndexExprContext)
+                        for s in sufijos)):
+            self._traducir_indices(ctx, atomo, sufijos)
         else:
             self.valor_de[id(ctx)] = self._gancho(
                 "acceso a miembro o índice", ctx)
+
+    def _es_destino_de_asignacion(self, ctx) -> bool:
+        """¿Este leftHandSide es el lado izquierdo de un '=' ?"""
+        padre = ctx.parentCtx
+        return (isinstance(padre, CompiscriptParser.AssignExprContext)
+                and padre.leftHandSide() is ctx)
+
+    def _traducir_indices(self, ctx, atomo, sufijos) -> None:
+        """a[i], a[i][j], ... como lectura o como destino de asignación.
+
+        Como lectura, cada índice es `t = base[i]`, y el resultado
+        alimenta al siguiente (una matriz es un arreglo de arreglos).
+        Como destino de '=', el ÚLTIMO índice no se lee: se deja
+        (arreglo, índice) anotado para que exitAssignExpr emita
+        `arreglo[índice] = valor`.
+        """
+        programa = self.gen.programa
+        como_destino = self._es_destino_de_asignacion(ctx)
+        base = self._valor(atomo)
+        hasta = len(sufijos) - 1 if como_destino else len(sufijos)
+        for sufijo in sufijos[:hasta]:
+            indice = self._valor(sufijo.expression())
+            destino = self.gen.temporal_para(base, indice)
+            programa.emitir_lectura_indice(base, indice, destino)
+            base = destino
+        if como_destino:
+            indice = self._valor(sufijos[-1].expression())
+            self._lvalor[id(ctx)] = (base, indice)
+        self.valor_de[id(ctx)] = base
 
     def _traducir_llamada(self, atomo, llamada) -> str:
         """param a_i en orden, luego 'call f, N'. Devuelve
@@ -398,7 +448,15 @@ class ListenerTAC(CompiscriptListener):
         lhs = ctx.leftHandSide()
         valor = self._valor(ctx.assignmentExpr())
         atomo = lhs.primaryAtom()
-        if not lhs.suffixOp() and isinstance(
+        lvalor = self._lvalor.pop(id(lhs), None)
+        if lvalor is not None:
+            # a[i] = valor: el arreglo y el índice siguen vivos desde
+            # que se tradujo el lado izquierdo; se liberan al escribir.
+            arreglo, indice = lvalor
+            self.gen.programa.emitir_escritura_indice(arreglo, indice,
+                                                      valor)
+            self.gen.liberar(indice, arreglo)
+        elif not lhs.suffixOp() and isinstance(
                 atomo, CompiscriptParser.IdentifierExprContext):
             destino = self._destino(atomo.Identifier().getText())
             self.gen.programa.emitir_asignacion(destino, valor)

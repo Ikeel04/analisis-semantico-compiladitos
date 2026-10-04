@@ -44,6 +44,7 @@ Cada cuádruplo tiene además una forma impresa, cercana a la notación del
 | Paso de parámetro | `(param, x, _, _)` | `param x` |
 | Llamada | `(call, f, 2, t1)` | `t1 = call f, 2` |
 | Retorno | `(return, x, _, _)` | `return x` |
+| Creación de arreglo | `(newarray, 3, _, t1)` | `t1 = newarray 3` |
 | Lectura indexada | `(=[], a, i, t1)` | `t1 = a[i]` |
 | Escritura indexada | `([]=, i, x, a)` | `a[i] = x` |
 | Instanciación | `(new, Perro, _, t1)` | `t1 = new Perro` |
@@ -220,6 +221,49 @@ la expresión: no importa cuál se ejecutó, `t_r` queda con el
 resultado. El temporal del resultado se reserva antes de las dos
 asignaciones (está vivo en toda la construcción) y la condición se
 libera apenas se usa en el `ifFalse`.
+
+### Arreglos
+
+Un arreglo es una **referencia**: `newarray n` reserva `n` elementos y deja su
+referencia en el destino (§4: 8 bytes en el marco, el contenido vive en el
+heap). Los índices cuentan **elementos**, no bytes; escalar por el tamaño del
+elemento es trabajo de la generación de código objeto, que conoce el tipo.
+
+Literal `[a, b, c]`:
+
+```
+            t1 = newarray 3
+            t1[0] = a
+            t1[1] = b
+            t1[2] = c
+```
+
+El temporal del arreglo se pide **antes** de liberar los elementos: si no, podría
+reciclar el temporal de un elemento y el `newarray` lo pisaría antes de
+escribirlo en su posición. Una matriz literal `[[1, 2], [3, 4]]` construye cada
+fila primero y el arreglo exterior guarda sus referencias.
+
+Lectura `a[i]` (una matriz `m[i][j]` encadena un acceso por índice):
+
+```
+            t1 = a[i]              # m[i][j]:  t1 = m[i]
+                                   #           t1 = t1[j]
+```
+
+El índice se consume en la lectura, así que el resultado reutiliza su temporal
+(`t1 = a[t1]`).
+
+Escritura `a[i] = v`: el lado izquierdo no se lee. Se traduce hasta el
+penúltimo índice y se deja `(arreglo, índice)`; el último acceso es una
+escritura:
+
+```
+            <código de i>          # el temporal de i sigue vivo...
+            <código de v>          # ...mientras se evalúa el valor
+            a[i] = v
+```
+
+En `m[0][1] = 7` se lee la fila (`t1 = m[0]`) y se escribe la celda (`t1[1] = 7`).
 
 ### Llamada a función
 
@@ -509,4 +553,4 @@ el IDE aunque el programa todavía no compile.
 | `src/compiler/pipeline.py` | la compuerta |
 
 Tests: `tests/test_tac.py`, `tests/test_temporales.py`, `tests/test_memoria.py`,
-`tests/test_generacion.py`.
+`tests/test_generacion.py`, `tests/test_tac_arreglos.py`.

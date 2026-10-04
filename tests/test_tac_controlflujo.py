@@ -221,15 +221,17 @@ class TestFor(BaseTACControl):
 class TestForeach(BaseTACControl):
 
     def test_foreach_desarmado_en_ciclo_indexado(self):
-        """El arreglo literal aún no se traduce; el
-        desarme del ciclo ya funciona sobre su operando."""
+        """El arreglo literal se construye con newarray y luego el
+        ciclo se desarma sobre su operando."""
         self.assertEqual(self.lineas_tac(
             "let nums: integer[] = [1, 2];\n"
             "foreach (n in nums) {\n"
             "  print(n);\n"
             "}"),
-            ["# pendiente: arreglo literal",
-             "global+0 = /*arreglo literal*/ [1,2]",
+            ["t1 = newarray 2",
+             "t1[0] = 1",
+             "t1[1] = 2",
+             "global+0 = t1",
              "t1 = 0",
              "L1_foreach_inicio:",
              "t2 = length global+0",
