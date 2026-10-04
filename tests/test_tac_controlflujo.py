@@ -221,15 +221,15 @@ class TestFor(BaseTACControl):
 class TestForeach(BaseTACControl):
 
     def test_foreach_desarmado_en_ciclo_indexado(self):
-        """El arreglo literal es de la Persona 3; el desarme
-        del ciclo ya funciona sobre su operando."""
+        """El arreglo literal aún no se traduce; el
+        desarme del ciclo ya funciona sobre su operando."""
         self.assertEqual(self.lineas_tac(
             "let nums: integer[] = [1, 2];\n"
             "foreach (n in nums) {\n"
             "  print(n);\n"
             "}"),
-            ["# pendiente: arreglo literal (Persona 3)",
-             "global+0 = /*arreglo literal (Persona 3)*/ [1,2]",
+            ["# pendiente: arreglo literal",
+             "global+0 = /*arreglo literal*/ [1,2]",
              "t1 = 0",
              "L1_foreach_inicio:",
              "t2 = length global+0",

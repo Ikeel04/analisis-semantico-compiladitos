@@ -232,9 +232,9 @@ class TestFunciones(BaseTACExpresiones):
 class TestGanchosPendientes(BaseTACExpresiones):
 
     def test_los_atributos_de_clase_no_generan_codigo(self):
-        """Son parte del layout del objeto (memoria.py), no
-        sentencias ejecutables; 'this' y las propiedades
-        son de la Persona 3."""
+        """Son parte del layout del objeto (memoria.py),
+        no sentencias ejecutables; 'this' y las
+        propiedades aún no se traducen."""
         self.assertEqual(self.lineas_tac(
             "class Punto {\n"
             "  var x: integer;\n"
@@ -243,22 +243,17 @@ class TestGanchosPendientes(BaseTACExpresiones):
             "  }\n"
             "}"),
             ["function Punto.constructor:",
-             "# pendiente: this (Persona 3)",
-             "# pendiente: acceso a miembro o índice (Persona 3)",
-             "# pendiente: asignación a propiedad (Persona 3)",
+             "# pendiente: this",
+             "# pendiente: acceso a miembro o índice",
+             "# pendiente: asignación a propiedad",
              "endfunction Punto.constructor"])
 
-    def test_llamadas_y_new_marcan_lo_pendiente(self):
-        lineas = self.lineas_tac(
-            "function f(a: integer): integer {\n"
-            "  return f(a);\n"
-            "}\n"
-            "let x: integer = f(1);\n"
-            "let y: integer = 2;\n")
-        self.assertIn("# pendiente: llamada (Etapa 3)", lineas)
-        self.assertIn("return /*llamada (Etapa 3)*/ f(a)", lineas)
-        self.assertIn("global+0 = /*llamada (Etapa 3)*/ f(1)", lineas)
-        self.assertIn("endfunction f", lineas)
+    def test_new_marca_lo_pendiente(self):
+        self.assertIn(
+            "# pendiente: new",
+            self.lineas_tac(
+                "class Punto {}\n"
+                "let p: Punto = new Punto();\n"))
 
 
 class TestVistaDelIDE(BaseTACExpresiones):

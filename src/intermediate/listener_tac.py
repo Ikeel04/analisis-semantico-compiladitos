@@ -1,57 +1,22 @@
 """
 Listener de generación de código intermedio (TAC) de Compiscript.
 
-Recorre el árbol de ANTLR —después del análisis semántico, sobre una
-tabla de símbolos completa y con direcciones ya asignadas— y traduce
-cada nodo a cuádruplos a través del GeneradorTAC, igual que
-SemanticListener traduce a llamadas del SemanticChecker:
+Recorre el árbol de ANTLR —después del análisis semántico, sobre
+una tabla de símbolos completa y con direcciones ya asignadas— y
+traduce cada nodo a cuádruplos a través del GeneradorTAC, igual
+que SemanticListener traduce a llamadas del SemanticChecker:
 
     ParseTreeWalker.DEFAULT.walk(ListenerTAC(generador), arbol)
 
-Valores. Cada nodo de expresión deja su operando en `valor_de` al
-salir: un literal (tal cual), la dirección de una variable
-('fp+16') o el nombre de un temporal ('t1'). El nodo padre los
-consume para emitir el cuádruplo de su operación; los temporales
-que ya no sirven se liberan en el momento del consumo (un
-cuádruplo lee antes de escribir, así que liberar antes de pedir el
-temporal del resultado es válido: es el reciclaje de temporales).
-
-Ámbitos. El recorrido entra y sale de los mismos ámbitos que
-SemanticListener (función, clase, bloque y `for`), pero SIN mutar la
-tabla de símbolos: el listener mantiene su propia pila, consumiendo
-los Scope hijos en el mismo orden en que el análisis semántico los
-creó (ambos recorridos visitan el árbol en el mismo orden). Así,
-`_buscar` resuelve el símbolo correcto en el momento del uso —por
-ejemplo, la local que sombrea a una global— sin duplicar ámbitos en
-el árbol que muestra el IDE.
-
-Closures. Una variable que vive en el marco de OTRA función (una
-capturada del entorno) se referencia por su nombre, no por su
-dirección: su `fp+N` pertenece al marco de la función contenedora y
-alcanzarla es trabajo de la generación de código objeto, que recorre
-el enlace estático (DISENO_TAC.md §7).
-
-Miembros de clase. Una declaración de variable o constante cuyo
-ámbito directo es la clase es parte del layout del objeto, no código
-ejecutable: no emite nada (la dirección `obj+N` la asigna memoria.py).
-
-Ganchos pendientes. Las construcciones que traducen las otras
-etapas (llamadas: Etapa 3; clases, `new`, `this`, miembros e
-índices: Persona 3) emiten un comentario 'pendiente' y un
-operando provisorio, de modo que el recorrido sobrevive a
-programas que las usan y el IDE muestra exactamente qué falta
-por traducir.
-
-Control de flujo. El walker va de abajo hacia arriba, pero cada
-constructo salta en los puntos donde su sub-árbol ya está
-traducido: la condición en el 'exit' de su expresión (o en el
-'entrar' del bloque, para el 'if' y el 'while'), el cuerpo en
-el 'entrar'/'salir' de su bloque, y la etiqueta final en el
-'salir' del constructo. El 'for' usa el mismo truco para el
-inicializador (su etiqueta de inicio se emite al traducirlo) y
-para el paso (su etiqueta se emite al ENTRAR la expresión, antes
-de su código). Cada constructo apila un marco con sus etiquetas;
-'break' y 'continue' consultan la pila de ciclos del GeneradorTAC.
+Cada nodo de expresión deja su operando en `valor_de` al salir (un
+literal tal cual, la dirección de una variable o el nombre de un
+temporal); el nodo padre lo consume para emitir su cuádruplo, y
+los temporales que mueren se liberan en el consumo (reciclaje de
+temporales). Los ámbitos se espejan sin mutar la tabla, y las
+construcciones que aún no se traducen emiten un comentario
+'pendiente' con un operando provisorio para que el recorrido
+sobreviva a programas que las usan. Los esquemas de traducción
+están en docs/DISENO_TAC.md.
 """
 
 from __future__ import annotations
@@ -59,9 +24,7 @@ from __future__ import annotations
 import os
 import sys
 
-# El proyecto usa imports flat (igual que SemanticListener y los
-# tests): se añaden las carpetas a sys.path para importar sin
-# prefijos.
+# Imports flat, igual que SemanticListener y los tests.
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 _SRC = os.path.dirname(_AQUI)
 for _paquete in ("parser", "semantic"):
@@ -97,10 +60,9 @@ class ListenerTAC(CompiscriptListener):
     # ------------------------------------------------------------------
 
     def _entrar_ambito(self, kind: str, nombre: str | None = None):
-        """Empuja el Scope que el análisis semántico creó para este
-        nodo. Como ambos listeners recorren el árbol en el mismo
-        orden, el ámbito que corresponde a este nodo es el primer
-        hijo sin consumir del ámbito actual con ese tipo y nombre."""
+        """Empuja el Scope que el análisis semántico creó para
+        este nodo (primer hijo sin consumir del ámbito actual
+        con ese tipo y nombre)."""
         actual = self._ambitos[-1]
         for hijo in actual.children:
             if (hijo.kind == kind and hijo.name == nombre
@@ -121,12 +83,24 @@ class ListenerTAC(CompiscriptListener):
                 return simbolo, ambito
         return None, None
 
-    def _destino(self, nombre: str) -> str:
-        """Operando donde vive una variable.
+    def _nombre_de_funcion(self, simbolo) -> str:
+        """Nombre cualificado de una función, según el ámbito que
+        la declaró ('contador.interno'). No vale el contexto del
+        sitio de llamada: desde el cuerpo de 'factorial', la
+        recursiva sigue siendo 'factorial'."""
+        for nivel in range(len(self._ambitos) - 1, -1, -1):
+            if (self._ambitos[nivel].resolve_local(simbolo.name)
+                    is simbolo):
+                ruta = [a.name for a in self._ambitos[:nivel + 1]
+                        if a.kind in ("function", "class")]
+                return ".".join(ruta + [simbolo.name])
+        return simbolo.name
 
-        Es su dirección ('global+N', 'fp+N', 'obj+N'), salvo que
-        viva en el marco de otra función: entonces es su nombre, y
-        el código objeto la alcanza por el enlace estático (§7)."""
+    def _destino(self, nombre: str) -> str:
+        """Operando donde vive una variable: su dirección, salvo
+        que sea una función o una capturada de un cierre (entonces
+        su nombre; el código objeto la alcanza por el enlace
+        estático, §7 del doc)."""
         simbolo, ambito = self._buscar(nombre)
         if simbolo is None or not simbolo.direccion:
             return nombre                     # función o sin resolver
@@ -136,9 +110,8 @@ class ListenerTAC(CompiscriptListener):
         return simbolo.direccion
 
     def _en_marco_actual(self, ambito) -> bool:
-        """¿`ambito` es el ámbito de la función abierta o alguno de
-        sus bloques? (Los bloques no crean marco: sus variables
-        viven en el marco de la función que los contiene.)"""
+        """¿`ambito` es el ámbito de la función abierta o
+        uno de sus bloques? (Los bloques no crean marco.)"""
         for i in range(len(self._ambitos) - 1, -1, -1):
             if self._ambitos[i].kind == "function":
                 return self._ambitos.index(ambito) >= i
@@ -154,12 +127,12 @@ class ListenerTAC(CompiscriptListener):
                 and h.getSymbol().text in ops]
 
     def _pendiente(self, que: str) -> None:
-        """Marca una construcción que traducirá otra etapa."""
+        """Marca una construcción aún no traducida."""
         self.gen.programa.emitir_comentario(f"pendiente: {que}")
 
     def _gancho(self, que: str, ctx) -> str:
-        """Construcción pendiente: comentario y operando provisorio,
-        para que el recorrido sobreviva a programas que la usan."""
+        """Construcción pendiente: comentario y operando
+        provisorio, para que el recorrido sobreviva."""
         self._pendiente(que)
         return f"/*{que}*/ {ctx.getText()}"
 
@@ -175,11 +148,10 @@ class ListenerTAC(CompiscriptListener):
         self.valor_de[id(ctx)] = valores[-1]
 
     def _clasificar_expresiones_de_for(self, for_ctx) -> dict:
-        """En el 'for', la condición es la primera expresión directa
-        y el paso, la segunda. Si solo hay una, es el paso cuando
-        tiene dos ';' directos antes ('for (init; ; paso)' o
-        'for (;; paso)') y la condición si no (0 o 1: el ';'
-        del inicializador vive dentro de su propio contexto)."""
+        """En el 'for', la condición es la primera expresión
+        directa y el paso, la segunda. Si hay una sola, es
+        el paso cuando tiene dos ';' directos antes (el ';'
+        del inicializador vive dentro de su contexto)."""
         encontradas: dict[str, object] = {}
         punto_y_coma = 0
         expresiones: list[tuple[int, object]] = []
@@ -238,13 +210,11 @@ class ListenerTAC(CompiscriptListener):
 
     def enterExpression(self, ctx):
         if self._es_paso_de_for(ctx):
-            # El paso se traduce DESPUÉS del cuerpo: esta etiqueta
-            # marca dónde empieza (y adónde salta 'continue').
+            # El paso va después del cuerpo: aquí empieza.
             self.gen.programa.emitir_etiqueta(
                 self._ciclos[-1]["paso"])
         elif self._es_condicion_de_dowhile(ctx):
-            # La condición del do-while se traduce al final: aquí
-            # empieza, y es adónde salta 'continue'.
+            # La condición del do-while va al final.
             self.gen.programa.emitir_etiqueta(
                 self._ciclos[-1]["cond"])
 
@@ -258,21 +228,21 @@ class ListenerTAC(CompiscriptListener):
             self.gen.programa.emitir_salto_si_falso(
                 condicion, marco["fin"])
         elif self._es_paso_de_for(ctx):
-            # El paso ya está traducido: vuelve al inicio y marca
-            # dónde empieza el cuerpo. Su valor ya está asignado
-            # (es una asignación), así que el temporal sobra.
+            # El paso ya está traducido: vuelve al inicio
+            # y marca dónde empieza el cuerpo. Su valor ya
+            # está asignado, así que el temporal sobra.
             marco = self._ciclos[-1]
             self.gen.liberar(self.valor_de[id(ctx)])
             programa = self.gen.programa
             programa.emitir_salto(marco["inicio"])
             programa.emitir_etiqueta(marco["cuerpo"])
         elif self._es_sujeto_de_switch(ctx):
-            # El sujeto se compara con cada caso: vive todo el
-            # switch y se libera en exitSwitchStatement.
+            # El sujeto vive todo el switch (se libera al
+            # cerrarlo).
             self._switchs[-1]["sujeto"] = self.valor_de[id(ctx)]
         elif self._es_valor_de_case(ctx):
-            # Cadena de comparaciones: el caso se evalúa solo si
-            # los anteriores no cuadraron (§2 del doc).
+            # El caso se evalúa solo si los anteriores
+            # no cuadraron (§2 del doc).
             marco = self._switchs[-1]
             valor = self._valor(ctx)
             condicion = self.gen.nuevo_temporal()
@@ -283,9 +253,8 @@ class ListenerTAC(CompiscriptListener):
             programa.emitir_salto_si_falso(condicion, marco["no"][-1])
             self.gen.liberar(condicion)
         elif self._es_iterable_de_foreach(ctx):
-            # Condición del ciclo desarmado: índice < length(arreglo).
-            # Ni el índice ni el arreglo se liberan: viven todo
-            # el ciclo (el índice se recicla en el incremento).
+            # Condición del ciclo desarmado: índice < length.
+            # El índice y el arreglo viven todo el ciclo.
             marco = self._ciclos[-1]
             arreglo = self._valor(ctx)
             marco["arreglo"] = arreglo
@@ -334,8 +303,8 @@ class ListenerTAC(CompiscriptListener):
             self.valor_de[id(ctx)] = ctx.getChild(0).getText()
 
     def exitArrayLiteral(self, ctx):
-        self.valor_de[id(ctx)] = self._gancho("arreglo literal (Persona 3)",
-                                              ctx)
+        self.valor_de[id(ctx)] = self._gancho(
+            "arreglo literal", ctx)
 
     def exitPrimaryExpr(self, ctx):
         hijo = ctx.getChild(0)
@@ -378,10 +347,10 @@ class ListenerTAC(CompiscriptListener):
         self.valor_de[id(ctx)] = self._destino(ctx.Identifier().getText())
 
     def exitNewExpr(self, ctx):
-        self.valor_de[id(ctx)] = self._gancho("new (Persona 3)", ctx)
+        self.valor_de[id(ctx)] = self._gancho("new", ctx)
 
     def exitThisExpr(self, ctx):
-        self.valor_de[id(ctx)] = self._gancho("this (Persona 3)", ctx)
+        self.valor_de[id(ctx)] = self._gancho("this", ctx)
 
     def exitLeftHandSide(self, ctx):
         atomo = ctx.primaryAtom()
@@ -391,12 +360,39 @@ class ListenerTAC(CompiscriptListener):
             # Variable simple: su operando ya lo dio exitIdentifierExpr.
             self.valor_de[id(ctx)] = self._valor(atomo)
         elif (isinstance(atomo, CompiscriptParser.IdentifierExprContext)
-                and sufijos
-                and isinstance(sufijos[0], CompiscriptParser.CallExprContext)):
-            self.valor_de[id(ctx)] = self._gancho("llamada (Etapa 3)", ctx)
+                and len(sufijos) == 1
+                and isinstance(sufijos[0],
+                               CompiscriptParser.CallExprContext)):
+            self.valor_de[id(ctx)] = self._traducir_llamada(
+                atomo, sufijos[0])
         else:
             self.valor_de[id(ctx)] = self._gancho(
-                "acceso a miembro o índice (Persona 3)", ctx)
+                "acceso a miembro o índice", ctx)
+
+    def _traducir_llamada(self, atomo, llamada) -> str:
+        """param a_i en orden, luego 'call f, N'. Devuelve
+        el operando resultado, o '_' si la función es void."""
+        nombre = atomo.Identifier().getText()
+        # La tabla dejó su ámbito actual en el global:
+        # se resuelve en el espejo de ámbitos del
+        # recorrido (la función puede vivir en un
+        # ámbito contenedor, no en el global).
+        simbolo, _ = self._buscar(nombre)
+        argumentos = ([self._valor(e)
+                       for e in llamada.arguments().expression()]
+                      if llamada.arguments() is not None else [])
+        programa = self.gen.programa
+        for argumento in argumentos:
+            programa.emitir_parametro(argumento)
+        # Los argumentos se liberan tras el call: el param
+        # solo lee el operando y otro cómputo podría
+        # reciclar su slot antes de que ejecute el call.
+        void = not simbolo.type or simbolo.type == "void"
+        destino = None if void else self.gen.nuevo_temporal()
+        programa.emitir_llamada(self._nombre_de_funcion(simbolo),
+                                 len(argumentos), destino)
+        self.gen.liberar(*argumentos)
+        return destino if destino else "_"
 
     def exitAssignExpr(self, ctx):
         lhs = ctx.leftHandSide()
@@ -407,15 +403,14 @@ class ListenerTAC(CompiscriptListener):
             destino = self._destino(atomo.Identifier().getText())
             self.gen.programa.emitir_asignacion(destino, valor)
         else:
-            # Asignación a propiedad o índice: Persona 3.
-            self._pendiente(f"asignación a {lhs.getText()} (Persona 3)")
+            self._pendiente(f"asignación a {lhs.getText()}")
         # El valor lo libera quien consuma esta expresión (la
         # sentencia de asignación o la expresión padre).
         self.valor_de[id(ctx)] = valor
 
     def exitPropertyAssignExpr(self, ctx):
         valor = self._valor(ctx.assignmentExpr())
-        self._pendiente("asignación a propiedad (Persona 3)")
+        self._pendiente("asignación a propiedad")
         self.gen.liberar(valor)
         self.valor_de[id(ctx)] = valor
 
@@ -424,9 +419,8 @@ class ListenerTAC(CompiscriptListener):
     # ------------------------------------------------------------------
 
     def _emitir_inicio_de_for(self, ctx) -> None:
-        """El inicializador del 'for' ya está traducido: empieza la
-        etiqueta de inicio del ciclo (va DESPUÉS del inicializador
-        y ANTES de la condición)."""
+        """El inicializador del 'for' ya está traducido:
+        empieza la etiqueta de inicio (va después de él)."""
         padre = ctx.parentCtx
         if not isinstance(padre, CompiscriptParser.ForStatementContext):
             return
@@ -469,8 +463,8 @@ class ListenerTAC(CompiscriptListener):
                 self._destino(ctx.Identifier().getText()), valor)
             self.gen.liberar(valor)
         else:
-            # expression '.' Identifier '=' expression ';': Persona 3.
-            self._pendiente("asignación a propiedad (Persona 3)")
+            # expression '.' Identifier '=' expression ';'
+            self._pendiente("asignación a propiedad")
             self.gen.liberar(self._valor(exprs[1]))
         self._emitir_inicio_de_for(ctx)
 
@@ -526,7 +520,7 @@ class ListenerTAC(CompiscriptListener):
         padre = ctx.parentCtx
         if isinstance(padre, CompiscriptParser.IfStatementContext):
             if ctx is padre.block(0):
-                # Bloque 'then': si la condición es falsa, salta
+                # 'then': si la condición es falsa, salta
                 # al 'else' (o al fin, si no lo hay).
                 marco = self._ifs[-1]
                 condicion = self._valor(padre.expression())
@@ -534,13 +528,13 @@ class ListenerTAC(CompiscriptListener):
                 self.gen.programa.emitir_salto_si_falso(
                     condicion, marco["otro"] or marco["fin"])
             else:
-                # El bloque 'else' empieza donde aterrizó el
+                # El 'else' empieza donde aterrizó el
                 # salto del 'ifFalse'.
                 self.gen.programa.emitir_etiqueta(
                     self._ifs[-1]["otro"])
         elif isinstance(padre, CompiscriptParser.WhileStatementContext):
-            # El 'while': si la condición es falsa, el cuerpo
-            # no se ejecuta.
+            # 'while': si la condición es falsa, no
+            # se ejecuta el cuerpo.
             marco = self._ciclos[-1]
             condicion = self._valor(padre.expression())
             self.gen.liberar(condicion)
@@ -548,8 +542,7 @@ class ListenerTAC(CompiscriptListener):
                 condicion, marco["fin"])
         elif isinstance(padre, CompiscriptParser.TryCatchStatementContext):
             if ctx is padre.block(1):
-                # El 'catch' empieza donde aterrizan las
-                # excepciones de tiempo de ejecución.
+                # El 'catch' solo lo alcanza una excepción.
                 self.gen.programa.emitir_etiqueta(
                     self._trys[-1]["catch"])
         elif isinstance(padre, CompiscriptParser.ForeachStatementContext):
@@ -566,8 +559,8 @@ class ListenerTAC(CompiscriptListener):
         programa = self.gen.programa
         if isinstance(padre, CompiscriptParser.IfStatementContext):
             if (ctx is padre.block(0) and len(padre.block()) > 1):
-                # Fin del 'then': con 'else', salta al fin para
-                # no caer en el bloque contrario.
+                # Fin del 'then': con 'else', salta al fin
+                # para no caer en el bloque contrario.
                 programa.emitir_salto(self._ifs[-1]["fin"])
         elif isinstance(padre, CompiscriptParser.WhileStatementContext):
             programa.emitir_salto(self._ciclos[-1]["inicio"])
@@ -586,15 +579,14 @@ class ListenerTAC(CompiscriptListener):
             programa.emitir_salto(marco["inicio"])
         elif isinstance(padre, CompiscriptParser.TryCatchStatementContext):
             if ctx is padre.block(0):
-                # Fin del 'try': el flujo normal salta por
-                # encima del 'catch'.
+                # Fin del 'try': el flujo normal salta
+                # por encima del 'catch'.
                 programa.emitir_salto(self._trys[-1]["fin"])
         self._salir_ambito()
 
     def enterForStatement(self, ctx):
-        # El inicializador queda fuera del bloque: el ciclo abre
-        # su propio ámbito (la variable del init vive en la
-        # condición, la iteración y el cuerpo, pero no después).
+        # El inicializador queda fuera del bloque: el
+        # ciclo abre su propio ámbito.
         self._entrar_ambito("block")
         inicio = self.gen.nueva_etiqueta("for_inicio")
         fin = self.gen.nueva_etiqueta("for_fin")
@@ -602,14 +594,14 @@ class ListenerTAC(CompiscriptListener):
         cuerpo = self.gen.nueva_etiqueta("for_cuerpo")
         tiene_paso = (self._clasificar_expresiones_de_for(ctx)
                       .get("paso") is not None)
-        # Sin paso, 'continue' y el final del cuerpo vuelven
-        # directo a la condición.
+        # Sin paso, 'continue' y el fin del cuerpo
+        # vuelven directo a la condición.
         volver = paso if tiene_paso else inicio
         self._ciclos.append({
             "inicio": inicio, "fin": fin, "paso": paso,
             "cuerpo": cuerpo, "volver": volver,
-            # Cuando hay inicializador, la etiqueta de inicio se
-            # emite al terminar de traducirlo (va después de él).
+            # Hay inicializador: la etiqueta de inicio
+            # se emite al terminar de traducirlo.
             "inicio_pendiente": (ctx.variableDeclaration() is not None
                                  or ctx.assignment() is not None),
         })
@@ -657,8 +649,8 @@ class ListenerTAC(CompiscriptListener):
         cond = self.gen.nueva_etiqueta("dowhile_cond")
         self._ciclos.append({"inicio": inicio, "fin": fin, "cond": cond})
         self.gen.programa.emitir_etiqueta(inicio)
-        # 'continue' salta a la condición, que se traduce al
-        # final (su etiqueta se emite en enterExpression).
+        # 'continue' salta a la condición (su etiqueta
+        # se emite en enterExpression).
         self.gen.entrar_ciclo(cond, fin)
 
     def exitDoWhileStatement(self, ctx):
@@ -672,8 +664,7 @@ class ListenerTAC(CompiscriptListener):
         self.gen.salir_ciclo()
 
     def enterForeachStatement(self, ctx):
-        # Se desarma en un ciclo indexado (§2 del doc): el índice
-        # es un temporal que vive todo el ciclo.
+        # Se desarma en un ciclo indexado (§2 del doc).
         inicio = self.gen.nueva_etiqueta("foreach_inicio")
         fin = self.gen.nueva_etiqueta("foreach_fin")
         paso = self.gen.nueva_etiqueta("foreach_paso")
@@ -716,8 +707,8 @@ class ListenerTAC(CompiscriptListener):
             self.gen.nueva_etiqueta("case_no"))
 
     def exitSwitchCase(self, ctx):
-        # Fin del cuerpo del caso: salta al fin del switch y
-        # marca dónde continúa la cadena de comparaciones.
+        # Fin del caso: salta al fin y marca dónde
+        # sigue la cadena de comparaciones.
         marco = self._switchs[-1]
         programa = self.gen.programa
         programa.emitir_salto(marco["fin"])

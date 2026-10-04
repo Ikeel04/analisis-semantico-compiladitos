@@ -35,10 +35,9 @@ class GeneradorTAC:
         self.etiquetas = GeneradorEtiquetas()
         self._pools = [PoolTemporales()]   # el de abajo es el del código global
         self._contexto: list[str] = []     # clases y funciones abiertas
-        # Ciclos abiertos: (etiqueta de continue, etiqueta de
-        # break). El análisis semántico ya garantizó que esos
-        # saltos solo aparecen dentro de un ciclo, así que la
-        # pila nunca está vacía cuando se consulta (§2 del doc).
+        # Ciclos abiertos: (etiqueta de continue, etiqueta
+        # de break). El análisis semántico garantizó que
+        # esos saltos solo aparecen dentro de un ciclo.
         self._ciclos: list[tuple[str, str]] = []
 
     @property
@@ -77,12 +76,10 @@ class GeneradorTAC:
         self._contexto.pop()
 
     def entrar_funcion(self, nombre: str) -> str:
-        """Abre el cuerpo de una función y le da pool propio.
-
-        Los temporales de una función viven en SU marco, pero al terminar una
-        función anidada hay que seguir con los que la externa tenía vivos; por
-        eso los pools se apilan en vez de reiniciarse.
-        """
+        """Abre el cuerpo de una función y le da pool
+        propio. Los pools se apilan (no se reinician):
+        al salir una función anidada siguen los temporales
+        que la externa tenía vivos."""
         cualificado = self.nombre_cualificado(nombre)
         self.programa.emitir_inicio_funcion(cualificado)
         self._contexto.append(nombre)
@@ -106,9 +103,9 @@ class GeneradorTAC:
         return self.resumen.registros.get(nombre_cualificado)
 
     # ------------------------------------------------------------------
-    # Ciclos: a dónde saltan 'break' y 'continue' del ciclo abierto.
-    # 'continuar' es el punto donde se evalúa la condición (o el
-    # paso, en 'for' y 'foreach', para no saltarse el incremento).
+    # Ciclos: a dónde saltan 'break' y 'continue'. 'continuar'
+    # es donde se evalúa la condición (o el paso, en 'for'
+    # y 'foreach', para no saltarse el incremento).
     # ------------------------------------------------------------------
 
     def entrar_ciclo(self, continuar: str, salir: str) -> None:

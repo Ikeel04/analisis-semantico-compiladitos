@@ -233,6 +233,20 @@ Los `param` van en el orden de declaración y el número del `call` es la
 cantidad de argumentos, para que el generador de código objeto sepa cuántos
 desapilar. Si la función es `void`, el `call` se emite sin resultado.
 
+Los temporales de los argumentos se liberan **después** del
+`call`: un `param` solo lee su operando cuando el código
+objeto lo ejecuta, y liberarlo antes permitiría que otro
+cómputo recicle el slot y corrompa el argumento.
+
+El nombre del `call` es el **cualificado según el ámbito
+que declaró la función** (`contador.interno`, `Pila.tamano`),
+no el del sitio de llamada: así una recursiva se llama a
+sí misma por su nombre simple desde su propio cuerpo. La
+resolución camina los ámbitos del recorrido hasta el que
+contiene al símbolo y junta los nombres de los ámbitos
+`function`/`class` de ese camino —el mismo esquema con
+que `memoria.py` clavea los registros de activación.
+
 ### Declaración de función
 
 ```
