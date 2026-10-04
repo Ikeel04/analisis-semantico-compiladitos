@@ -55,9 +55,16 @@ class ListenerTAC(CompiscriptListener):
         self._switchs: list[dict] = []        # switch
         self._trys: list[dict] = []           # try / catch
         # Destinos de asignación ya resueltos: id(leftHandSide) ->
-        # (arreglo, índice). Los llena exitLeftHandSide y los consume
-        # exitAssignExpr, que es quien emite la escritura.
-        self._lvalor: dict[int, tuple[str, str]] = {}
+        # ("indice" | "campo", base, índice o nombre del campo). Los llena
+        # exitLeftHandSide y los consume exitAssignExpr, que emite la
+        # escritura.
+        self._lvalor: dict[int, tuple[str, str, str]] = {}
+        # Atributos con inicializador. Su código no puede quedar suelto en el
+        # cuerpo de la clase (no hay objeto todavía): se extrae y se junta en
+        # una función 'Clase.__atributos' que 'new' llama sobre cada objeto.
+        self._clases_con_init: set[str] = set()   # se llena en enterProgram
+        self._inits: dict[str, list] = {}         # clase -> [(campo, valor, código)]
+        self._inicio_init = 0
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -212,6 +219,22 @@ class ListenerTAC(CompiscriptListener):
     # Expresiones
     # ------------------------------------------------------------------
 
+    def enterProgram(self, ctx):
+        self._escanear_clases(ctx)
+
+    def _escanear_clases(self, nodo) -> None:
+        """Marca las clases con atributos inicializados ANTES de recorrerlas:
+        un 'new' puede aparecer en el código antes que la clase."""
+        if isinstance(nodo, CompiscriptParser.ClassDeclarationContext):
+            for miembro in nodo.classMember():
+                variable = miembro.variableDeclaration()
+                if (miembro.constantDeclaration() is not None
+                        or (variable is not None
+                            and variable.initializer() is not None)):
+                    self._clases_con_init.add(nodo.Identifier(0).getText())
+        for i in range(nodo.getChildCount()):
+            self._escanear_clases(nodo.getChild(i))
+
     def enterExpression(self, ctx):
         if self._es_paso_de_for(ctx):
             # El paso va después del cuerpo: aquí empieza.
@@ -364,31 +387,40 @@ class ListenerTAC(CompiscriptListener):
         self.valor_de[id(ctx)] = self._destino(ctx.Identifier().getText())
 
     def exitNewExpr(self, ctx):
-        self.valor_de[id(ctx)] = self._gancho("new", ctx)
+        """new C(a, b) -> t = new C; param t; param a; param b;
+        call C.constructor, 3.
+
+        El objeto viaja como primer 'param' (el receptor), así que el N del
+        call lo cuenta. El constructor puede ser heredado; si ninguna clase
+        de la cadena lo define, solo se reserva el objeto.
+        """
+        clase = ctx.Identifier().getText()
+        argumentos = ([self._valor(e) for e in ctx.arguments().expression()]
+                      if ctx.arguments() is not None else [])
+        programa = self.gen.programa
+        # El temporal del objeto se pide ANTES de liberar los argumentos:
+        # si no, podría reciclar uno y el 'new' lo pisaría antes del call.
+        objeto = self.gen.nuevo_temporal()
+        programa.emitir_nuevo(clase, objeto)
+        for ancestro in self._con_inicializadores(clase):
+            programa.emitir_parametro(objeto)
+            programa.emitir_llamada(f"{ancestro}.__atributos", 1)
+        constructor, duena = self._buscar_miembro(clase, "constructor")
+        if constructor is not None:
+            programa.emitir_parametro(objeto)
+            for argumento in argumentos:
+                programa.emitir_parametro(argumento)
+            programa.emitir_llamada(f"{duena}.constructor",
+                                    len(argumentos) + 1)
+        self.gen.liberar(*argumentos)
+        self.valor_de[id(ctx)] = objeto
 
     def exitThisExpr(self, ctx):
-        self.valor_de[id(ctx)] = self._gancho("this", ctx)
+        # 'this' es el nombre simbólico del receptor dentro de un método.
+        self.valor_de[id(ctx)] = "this"
 
     def exitLeftHandSide(self, ctx):
-        atomo = ctx.primaryAtom()
-        sufijos = ctx.suffixOp()
-        if not sufijos and isinstance(
-                atomo, CompiscriptParser.IdentifierExprContext):
-            # Variable simple: su operando ya lo dio exitIdentifierExpr.
-            self.valor_de[id(ctx)] = self._valor(atomo)
-        elif (isinstance(atomo, CompiscriptParser.IdentifierExprContext)
-                and len(sufijos) == 1
-                and isinstance(sufijos[0],
-                               CompiscriptParser.CallExprContext)):
-            self.valor_de[id(ctx)] = self._traducir_llamada(
-                atomo, sufijos[0])
-        elif (isinstance(atomo, CompiscriptParser.IdentifierExprContext)
-                and all(isinstance(s, CompiscriptParser.IndexExprContext)
-                        for s in sufijos)):
-            self._traducir_indices(ctx, atomo, sufijos)
-        else:
-            self.valor_de[id(ctx)] = self._gancho(
-                "acceso a miembro o índice", ctx)
+        self._traducir_cadena(ctx, ctx.primaryAtom(), ctx.suffixOp())
 
     def _es_destino_de_asignacion(self, ctx) -> bool:
         """¿Este leftHandSide es el lado izquierdo de un '=' ?"""
@@ -396,42 +428,163 @@ class ListenerTAC(CompiscriptListener):
         return (isinstance(padre, CompiscriptParser.AssignExprContext)
                 and padre.leftHandSide() is ctx)
 
-    def _traducir_indices(self, ctx, atomo, sufijos) -> None:
-        """a[i], a[i][j], ... como lectura o como destino de asignación.
+    # ------------------------------------------------------------------
+    # Clases y herencia: solo lo necesario para resolver llamadas
+    # ------------------------------------------------------------------
 
-        Como lectura, cada índice es `t = base[i]`, y el resultado
-        alimenta al siguiente (una matriz es un arreglo de arreglos).
-        Como destino de '=', el ÚLTIMO índice no se lee: se deja
-        (arreglo, índice) anotado para que exitAssignExpr emita
-        `arreglo[índice] = valor`.
+    def _scope_de_clase(self, nombre):
+        for hijo in self.gen.tabla.global_scope.children:
+            if hijo.kind == "class" and hijo.name == nombre:
+                return hijo
+        return None
+
+    def _buscar_miembro(self, clase, nombre):
+        """(símbolo, clase que lo declara) subiendo por la herencia, o
+        (None, None). Es la misma búsqueda del análisis semántico: un
+        método heredado se resuelve en el ancestro más cercano que lo
+        define."""
+        vistos = set()
+        while clase and clase not in vistos:
+            vistos.add(clase)
+            scope = self._scope_de_clase(clase)
+            simbolo = scope.resolve_local(nombre) if scope is not None else None
+            if simbolo is not None:
+                return simbolo, clase
+            simbolo_clase = self.gen.tabla.global_scope.resolve_local(clase)
+            clase = (simbolo_clase.extra.get("parent")
+                     if simbolo_clase is not None else None)
+        return None, None
+
+    def _con_inicializadores(self, clase) -> list[str]:
+        """Clases de la cadena de herencia con atributos inicializados, de
+        la raíz hacia `clase`: los del padre se inicializan primero."""
+        cadena, vistos = [], set()
+        while clase and clase not in vistos:
+            vistos.add(clase)
+            cadena.append(clase)
+            simbolo = self.gen.tabla.global_scope.resolve_local(clase)
+            clase = simbolo.extra.get("parent") if simbolo is not None else None
+        return [c for c in reversed(cadena) if c in self._clases_con_init]
+
+    def _guardar_inicializador(self, campo: str, valor: str) -> None:
+        """Saca de la salida el código del inicializador de un atributo y lo
+        guarda para la función de inicialización de su clase."""
+        programa = self.gen.programa
+        codigo = programa.instrucciones[self._inicio_init:]
+        del programa.instrucciones[self._inicio_init:]
+        self.gen.liberar(valor)       # su temporal era del código global
+        self._inits.setdefault(self._clase_actual(), []).append(
+            (campo, valor, codigo))
+
+    def _clase_actual(self):
+        """Clase del método que se está traduciendo (el tipo de 'this')."""
+        for ambito in reversed(self._ambitos):
+            if ambito.kind == "class":
+                return ambito.name
+        return None
+
+    def _tipo_de_atomo(self, atomo):
+        """Tipo estático del primer elemento de una cadena, o None."""
+        if isinstance(atomo, CompiscriptParser.NewExprContext):
+            return atomo.Identifier().getText()
+        if isinstance(atomo, CompiscriptParser.ThisExprContext):
+            return self._clase_actual()
+        simbolo, _ = self._buscar(atomo.Identifier().getText())
+        return simbolo.type if simbolo is not None else None
+
+    @staticmethod
+    def _tipo_de_elemento(tipo):
+        if isinstance(tipo, str) and tipo.endswith("[]"):
+            return tipo[:-2]
+        return None
+
+    # ------------------------------------------------------------------
+    # Cadenas de acceso: variable, llamada, índice, atributo y método
+    # ------------------------------------------------------------------
+
+    def _traducir_cadena(self, ctx, atomo, sufijos) -> None:
+        """Traduce `atomo sufijo*`: a, f(x), a[i], p.campo, p.m(x), ...
+
+        Cada sufijo consume la base anterior y deja el siguiente operando
+        (normalmente un temporal que reutiliza el de la base). Se lleva el
+        tipo estático para saber a qué método llama `obj.m()`.
+
+        Como destino de '=', el ÚLTIMO sufijo (índice o atributo) no se lee:
+        se anota (tipo, base, selector) para que exitAssignExpr emita la
+        escritura `base[selector] = v` o `base.selector = v`.
         """
         programa = self.gen.programa
-        como_destino = self._es_destino_de_asignacion(ctx)
+        Indice = CompiscriptParser.IndexExprContext
+        Atributo = CompiscriptParser.PropertyAccessExprContext
+        Llamada = CompiscriptParser.CallExprContext
+
+        como_destino = (bool(sufijos)
+                        and self._es_destino_de_asignacion(ctx)
+                        and isinstance(sufijos[-1], (Indice, Atributo)))
         base = self._valor(atomo)
+        tipo = self._tipo_de_atomo(atomo)
         hasta = len(sufijos) - 1 if como_destino else len(sufijos)
-        for sufijo in sufijos[:hasta]:
-            indice = self._valor(sufijo.expression())
-            destino = self.gen.temporal_para(base, indice)
-            programa.emitir_lectura_indice(base, indice, destino)
-            base = destino
+
+        i = 0
+        if (isinstance(atomo, CompiscriptParser.IdentifierExprContext)
+                and sufijos and isinstance(sufijos[0], Llamada)):
+            # f(x): el tipo de una función es su tipo de retorno.
+            base = self._traducir_llamada(atomo, sufijos[0])
+            i = 1
+
+        while i < hasta:
+            sufijo = sufijos[i]
+            if isinstance(sufijo, Indice):
+                indice = self._valor(sufijo.expression())
+                destino = self.gen.temporal_para(base, indice)
+                programa.emitir_lectura_indice(base, indice, destino)
+                base, tipo = destino, self._tipo_de_elemento(tipo)
+            elif isinstance(sufijo, Atributo):
+                nombre = sufijo.Identifier().getText()
+                siguiente = sufijos[i + 1] if i + 1 < hasta else None
+                if isinstance(siguiente, Llamada):
+                    base, tipo = self._traducir_llamada_metodo(
+                        base, tipo, nombre, siguiente)
+                    i += 1
+                else:
+                    destino = self.gen.temporal_para(base)
+                    programa.emitir_lectura_campo(base, nombre, destino)
+                    simbolo, _ = self._buscar_miembro(tipo, nombre)
+                    base = destino
+                    tipo = simbolo.type if simbolo is not None else None
+            else:
+                base = self._gancho("llamada a un valor", ctx)
+            i += 1
+
         if como_destino:
-            indice = self._valor(sufijos[-1].expression())
-            self._lvalor[id(ctx)] = (base, indice)
+            ultimo = sufijos[-1]
+            if isinstance(ultimo, Indice):
+                self._lvalor[id(ctx)] = (
+                    "indice", base, self._valor(ultimo.expression()))
+            else:
+                self._lvalor[id(ctx)] = (
+                    "campo", base, ultimo.Identifier().getText())
         self.valor_de[id(ctx)] = base
 
     def _traducir_llamada(self, atomo, llamada) -> str:
         """param a_i en orden, luego 'call f, N'. Devuelve
-        el operando resultado, o '_' si la función es void."""
+        el operando resultado, o '_' si la función es void.
+
+        Un método llamado por su nombre dentro de su propia clase tiene
+        receptor implícito: se pasa 'this' como primer param."""
         nombre = atomo.Identifier().getText()
         # La tabla dejó su ámbito actual en el global:
         # se resuelve en el espejo de ámbitos del
         # recorrido (la función puede vivir en un
         # ámbito contenedor, no en el global).
-        simbolo, _ = self._buscar(nombre)
+        simbolo, ambito = self._buscar(nombre)
         argumentos = ([self._valor(e)
                        for e in llamada.arguments().expression()]
                       if llamada.arguments() is not None else [])
         programa = self.gen.programa
+        es_metodo = ambito is not None and ambito.kind == "class"
+        if es_metodo:
+            programa.emitir_parametro("this")
         for argumento in argumentos:
             programa.emitir_parametro(argumento)
         # Los argumentos se liberan tras el call: el param
@@ -440,26 +593,56 @@ class ListenerTAC(CompiscriptListener):
         void = not simbolo.type or simbolo.type == "void"
         destino = None if void else self.gen.nuevo_temporal()
         programa.emitir_llamada(self._nombre_de_funcion(simbolo),
-                                 len(argumentos), destino)
+                                 len(argumentos) + (1 if es_metodo else 0),
+                                 destino)
         self.gen.liberar(*argumentos)
         return destino if destino else "_"
+
+    def _traducir_llamada_metodo(self, receptor, clase, nombre, llamada):
+        """obj.m(a, b) -> param obj; param a; param b; t = call C.m, 3.
+
+        C es la clase que declara m: la estática del receptor o, si no la
+        redefine, el ancestro más cercano que sí (enlace estático; el
+        despacho dinámico queda para código objeto, DISENO_TAC.md §7).
+        Devuelve (operando resultado o '_', tipo de retorno)."""
+        simbolo, duena = self._buscar_miembro(clase, nombre)
+        argumentos = ([self._valor(e)
+                       for e in llamada.arguments().expression()]
+                      if llamada.arguments() is not None else [])
+        programa = self.gen.programa
+        programa.emitir_parametro(receptor)
+        for argumento in argumentos:
+            programa.emitir_parametro(argumento)
+        void = (simbolo is None or not simbolo.type
+                or simbolo.type == "void")
+        destino = None if void else self.gen.nuevo_temporal()
+        cualificado = f"{duena}.{nombre}" if duena else nombre
+        programa.emitir_llamada(cualificado, len(argumentos) + 1, destino)
+        self.gen.liberar(*argumentos)
+        self.gen.liberar(receptor)
+        tipo = simbolo.type if simbolo is not None else None
+        return (destino if destino else "_"), tipo
 
     def exitAssignExpr(self, ctx):
         lhs = ctx.leftHandSide()
         valor = self._valor(ctx.assignmentExpr())
         atomo = lhs.primaryAtom()
         lvalor = self._lvalor.pop(id(lhs), None)
+        programa = self.gen.programa
         if lvalor is not None:
-            # a[i] = valor: el arreglo y el índice siguen vivos desde
-            # que se tradujo el lado izquierdo; se liberan al escribir.
-            arreglo, indice = lvalor
-            self.gen.programa.emitir_escritura_indice(arreglo, indice,
-                                                      valor)
-            self.gen.liberar(indice, arreglo)
+            # a[i] = v  o  p.campo = v: la base y el índice siguen vivos
+            # desde que se tradujo el lado izquierdo; se liberan al escribir.
+            clase, base, selector = lvalor
+            if clase == "indice":
+                programa.emitir_escritura_indice(base, selector, valor)
+                self.gen.liberar(selector, base)
+            else:
+                programa.emitir_escritura_campo(base, selector, valor)
+                self.gen.liberar(base)
         elif not lhs.suffixOp() and isinstance(
                 atomo, CompiscriptParser.IdentifierExprContext):
             destino = self._destino(atomo.Identifier().getText())
-            self.gen.programa.emitir_asignacion(destino, valor)
+            programa.emitir_asignacion(destino, valor)
         else:
             self._pendiente(f"asignación a {lhs.getText()}")
         # El valor lo libera quien consuma esta expresión (la
@@ -468,8 +651,10 @@ class ListenerTAC(CompiscriptListener):
 
     def exitPropertyAssignExpr(self, ctx):
         valor = self._valor(ctx.assignmentExpr())
-        self._pendiente("asignación a propiedad")
-        self.gen.liberar(valor)
+        objeto = self._valor(ctx.leftHandSide())
+        self.gen.programa.emitir_escritura_campo(
+            objeto, ctx.Identifier().getText(), valor)
+        self.gen.liberar(objeto)
         self.valor_de[id(ctx)] = valor
 
     # ------------------------------------------------------------------
@@ -492,8 +677,20 @@ class ListenerTAC(CompiscriptListener):
         del layout del objeto, no código ejecutable."""
         return self._ambitos[-1].kind == "class"
 
+    def enterVariableDeclaration(self, ctx):
+        if self._es_miembro_de_clase():
+            self._inicio_init = len(self.gen.programa.instrucciones)
+
+    def enterConstantDeclaration(self, ctx):
+        if self._es_miembro_de_clase():
+            self._inicio_init = len(self.gen.programa.instrucciones)
+
     def exitVariableDeclaration(self, ctx):
         if self._es_miembro_de_clase():
+            if ctx.initializer() is not None:
+                self._guardar_inicializador(
+                    ctx.Identifier().getText(),
+                    self._valor(ctx.initializer().expression()))
             return
         inicializador = ctx.initializer()
         if inicializador is None:
@@ -506,6 +703,8 @@ class ListenerTAC(CompiscriptListener):
 
     def exitConstantDeclaration(self, ctx):
         if self._es_miembro_de_clase():
+            self._guardar_inicializador(
+                ctx.Identifier().getText(), self._valor(ctx.expression()))
             return
         valor = self._valor(ctx.expression())
         self.gen.programa.emitir_asignacion(
@@ -522,8 +721,11 @@ class ListenerTAC(CompiscriptListener):
             self.gen.liberar(valor)
         else:
             # expression '.' Identifier '=' expression ';'
-            self._pendiente("asignación a propiedad")
-            self.gen.liberar(self._valor(exprs[1]))
+            objeto = self._valor(exprs[0])
+            valor = self._valor(exprs[1])
+            self.gen.programa.emitir_escritura_campo(
+                objeto, ctx.Identifier().getText(), valor)
+            self.gen.liberar(valor, objeto)
         self._emitir_inicio_de_for(ctx)
 
     def exitExpressionStatement(self, ctx):
@@ -568,6 +770,16 @@ class ListenerTAC(CompiscriptListener):
         self.gen.entrar_clase(nombre)
 
     def exitClassDeclaration(self, ctx):
+        inicializadores = self._inits.pop(ctx.Identifier(0).getText(), [])
+        if inicializadores:
+            # Clase.__atributos: recibe el objeto como 'this' y deja cada
+            # atributo con su valor inicial. Va después de los métodos.
+            self.gen.entrar_funcion("__atributos")
+            programa = self.gen.programa
+            for campo, valor, codigo in inicializadores:
+                programa.instrucciones.extend(codigo)
+                programa.emitir_escritura_campo("this", campo, valor)
+            self.gen.salir_funcion()
         self.gen.salir_clase()
         self._salir_ambito()
 

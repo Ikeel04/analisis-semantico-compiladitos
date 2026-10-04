@@ -25,7 +25,13 @@ for _carpeta in ("src/parser", "src/lexico", "src/compiler", "src/ide", "src/sem
 import streamlit as st
 
 from arbol import figura_arbol
-from pipeline import MENSAJE_EXITO, FilaError, ResultadoAnalisis, analizar_codigo
+from pipeline import (
+    MENSAJE_EXITO,
+    MENSAJE_TAC_BLOQUEADO,
+    FilaError,
+    ResultadoAnalisis,
+    analizar_codigo,
+)
 from analizador import Token
 from symbol_table import SymbolTable, SemanticError
 
@@ -258,8 +264,17 @@ resultado = st.session_state["resultado"]
 
 _mostrar_barra_estado(nombre, resultado, codigo)
 
-tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_demo_ts = st.tabs(
-    ["Editor", "Errores", "Tokens", "Ámbitos", "Árbol", "Demo tabla de símbolos"]
+tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_tac, tab_memoria, tab_demo_ts = st.tabs(
+    [
+        "Editor",
+        "Errores",
+        "Tokens",
+        "Ámbitos",
+        "Árbol",
+        "Código intermedio",
+        "Memoria",
+        "Demo tabla de símbolos",
+    ]
 )
 
 with tab_editor:
@@ -334,6 +349,51 @@ with tab_arbol:
             st.code(resultado.arbol, language="text")
     else:
         st.write("No se pudo construir el árbol sintáctico.")
+
+with tab_tac:
+    if resultado is None:
+        st.info("Pulsa «Compilar» para generar el código intermedio.")
+    elif not resultado.genero_tac:
+        st.warning(MENSAJE_TAC_BLOQUEADO)
+    else:
+        temporales = resultado.temporales
+        col_cuad, col_creados, col_reuso, col_pico = st.columns(4)
+        col_cuad.metric("Cuádruplos", len(resultado.tac_filas))
+        col_creados.metric("Temporales creados", temporales.get("nombres_creados", 0))
+        col_reuso.metric("Reutilizaciones", temporales.get("reutilizaciones", 0))
+        col_pico.metric("Pico simultáneo", temporales.get("pico_simultaneo", 0))
+
+        vista = st.radio(
+            "Vista del código intermedio",
+            ["Instrucciones", "Cuádruplos"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if vista == "Instrucciones":
+            st.code(resultado.tac_texto, language="text", height=420)
+        else:
+            st.dataframe(resultado.tac_filas, width="stretch", hide_index=True)
+
+        st.download_button(
+            "Descargar código intermedio (.tac)",
+            data=resultado.tac_texto,
+            file_name=f"{Path(nombre).stem}.tac",
+            mime="text/plain",
+        )
+
+with tab_memoria:
+    if resultado is None:
+        st.info("Pulsa «Compilar» para calcular el modelo de memoria.")
+    elif not resultado.memoria_filas:
+        st.warning(MENSAJE_TAC_BLOQUEADO)
+    else:
+        st.caption(
+            "Área global, tamaño de las instancias de cada clase y registro de "
+            "activación de cada función, con la dirección de cada símbolo."
+        )
+        st.dataframe(resultado.memoria_filas, width="stretch", hide_index=True)
+        with st.expander("Ver los registros de activación como texto"):
+            st.code(resultado.memoria_texto, language="text")
 
 with tab_demo_ts:
     st.caption(

@@ -168,6 +168,8 @@ class TestNombresCualificados(BaseTACFunciones):
              "global+0 = t1"])
 
     def test_metodo_se_resuelve_con_su_clase(self):
+        """Un método llamado por su nombre dentro de su clase tiene receptor
+        implícito: 'this' va como primer param y el N del call lo cuenta."""
         self.assertEqual(self.lineas_tac(
             "class Pila {\n"
             "  function tamano(): integer {\n"
@@ -181,7 +183,8 @@ class TestNombresCualificados(BaseTACFunciones):
              "return 0",
              "endfunction Pila.tamano",
              "function Pila.doble:",
-             "t1 = call Pila.tamano, 0",
+             "param this",
+             "t1 = call Pila.tamano, 1",
              "t1 = t1 * 2",
              "return t1",
              "endfunction Pila.doble"])

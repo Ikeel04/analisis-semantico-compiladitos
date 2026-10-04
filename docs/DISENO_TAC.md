@@ -265,6 +265,77 @@ escritura:
 
 En `m[0][1] = 7` se lee la fila (`t1 = m[0]`) y se escribe la celda (`t1[1] = 7`).
 
+### Clases y objetos
+
+**Instanciación.** `new C(a, b)` reserva el objeto, inicializa sus atributos y
+llama al constructor. El objeto viaja como **primer `param`** (el receptor), así
+que el `N` del `call` lo cuenta:
+
+```
+            t1 = new C
+            param t1                   # receptor
+            param a
+            param b
+            call C.constructor, 3      # un constructor no devuelve valor
+```
+
+El temporal del objeto se pide **antes** de liberar los argumentos (igual que en
+el arreglo literal): si no, podría reciclar el de un argumento y `new` lo
+pisaría. El constructor puede ser **heredado**: si `C` no define uno, se usa el
+del ancestro más cercano que sí (`call A.constructor, 2`), el mismo criterio del
+análisis semántico. Si ninguna clase de la cadena lo define, solo se emite el
+`new`.
+
+**Atributos.** Se acceden por **nombre**, no por desplazamiento: `p.x` es
+`t1 = p.x` y `p.x = v` es `p.x = v`. El código objeto resuelve el desplazamiento
+con la clase (`obj+N`, §4). Una cadena `a.motor.hp` lee un eslabón por
+instrucción y reutiliza el temporal:
+
+```
+            t1 = a.motor
+            t1 = t1.hp
+```
+
+Dentro de un método, un atributo escrito sin `this` (`return n;`) se referencia
+por su dirección en el objeto, `obj+N`; con `this` (`this.n`) por su nombre.
+Ambas formas son equivalentes.
+
+**`this` y llamadas a métodos.** `this` es el nombre del receptor dentro de un
+método. Llamar `obj.m(x)` pasa el receptor como primer `param`, igual que el
+constructor:
+
+```
+            param obj
+            param x
+            t1 = call C.m, 2
+```
+
+Llamar un método por su nombre dentro de su clase (`m(x)` en vez de
+`this.m(x)`) tiene receptor implícito: el generador emite `param this`.
+
+**Herencia.** El nombre del `call` es el de la clase que **declara** el método:
+la clase estática del receptor o, si no lo redefine, el ancestro más cercano que
+sí. Con `class B : A` y `class C : B`, si `g` está en `A` y en `B`, `c.g()`
+llama a `B.g`; si solo está en `A`, a `A.g`. Los atributos heredados se acceden
+por nombre como cualquier otro y, en memoria, van primero (§5).
+
+**Atributos con valor inicial.** `var saldo: integer = 100 + 50;` no se puede
+emitir en el cuerpo de la clase, porque todavía no hay objeto. Su código se
+extrae y se junta en una función por clase, que recibe el objeto como `this`:
+
+```
+function Cuenta.__atributos:
+            t1 = 100 + 50
+            this.saldo = t1
+            this.MAX = 1000
+endfunction Cuenta.__atributos
+```
+
+`new` la llama sobre cada objeto, **antes** del constructor y con los
+ancestros primero (`call Base.__atributos, 1` y luego
+`call Cuenta.__atributos, 1`). Si una clase no tiene atributos inicializados, no
+se genera la función ni se emite la llamada.
+
 ### Llamada a función
 
 ```
@@ -531,6 +602,19 @@ el IDE aunque el programa todavía no compile.
 - **No hay optimización de mirilla** ni eliminación de saltos redundantes: el
   TAC se emite tal como sale de la traducción. El alcance del proyecto llega
   hasta la representación intermedia.
+- **El enlace de los métodos es estático.** `obj.m()` llama a la versión de `m`
+  que declara la clase *estática* de `obj` (o su ancestro más cercano). Si una
+  variable de tipo `Animal` guarda un `Perro` que redefine `m`, se llama a
+  `Animal.m`: el despacho dinámico (tabla de métodos) queda para la generación de
+  código objeto, que conoce la clase real del objeto en ejecución.
+- **El receptor no ocupa celda en el marco.** `this` viaja como primer `param`
+  pero el registro de activación de un método (§5) reserva solo sus parámetros
+  declarados. Si el código objeto lo guarda en el marco, el tamaño del marco y el
+  desplazamiento de los parámetros se corren una palabra; se resuelve ahí, sin
+  cambiar el TAC.
+- **`Clase.__atributos` no tiene registro de activación propio.** Es una función
+  generada: sus temporales se cuentan en su pool, pero `memoria.py` no le
+  asigna marco porque no existe en el código fuente.
 - **El enlace de acceso (static link) no se modela.** Compiscript permite
   funciones anidadas que leen variables del entorno donde se definieron; el
   análisis semántico ya registra esas capturas en
@@ -553,4 +637,5 @@ el IDE aunque el programa todavía no compile.
 | `src/compiler/pipeline.py` | la compuerta |
 
 Tests: `tests/test_tac.py`, `tests/test_temporales.py`, `tests/test_memoria.py`,
-`tests/test_generacion.py`, `tests/test_tac_arreglos.py`.
+`tests/test_generacion.py`, `tests/test_tac_arreglos.py`,
+`tests/test_tac_clases.py`.

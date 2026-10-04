@@ -233,8 +233,8 @@ class TestGanchosPendientes(BaseTACExpresiones):
 
     def test_los_atributos_de_clase_no_generan_codigo(self):
         """Son parte del layout del objeto (memoria.py),
-        no sentencias ejecutables; 'this' y las
-        propiedades aún no se traducen."""
+        no sentencias ejecutables: la declaración del atributo no emite
+        nada, solo el método que lo asigna a través de 'this'."""
         self.assertEqual(self.lineas_tac(
             "class Punto {\n"
             "  var x: integer;\n"
@@ -243,17 +243,17 @@ class TestGanchosPendientes(BaseTACExpresiones):
             "  }\n"
             "}"),
             ["function Punto.constructor:",
-             "# pendiente: this",
-             "# pendiente: acceso a miembro o índice",
-             "# pendiente: asignación a propiedad",
+             "this.x = 0",
              "endfunction Punto.constructor"])
 
-    def test_new_marca_lo_pendiente(self):
-        self.assertIn(
-            "# pendiente: new",
+    def test_new_reserva_el_objeto(self):
+        """Sin constructor en la cadena de herencia solo se emite el new."""
+        self.assertEqual(
             self.lineas_tac(
                 "class Punto {}\n"
-                "let p: Punto = new Punto();\n"))
+                "let p: Punto = new Punto();\n"),
+            ["t1 = new Punto",
+             "global+0 = t1"])
 
 
 class TestVistaDelIDE(BaseTACExpresiones):
