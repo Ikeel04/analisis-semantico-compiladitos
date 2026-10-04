@@ -1,7 +1,8 @@
-# Compiscript — Análisis semántico
+# Compiscript — Análisis semántico y código intermedio
 
-Analizador completo (léxico + sintáctico + semántico) del lenguaje Compiscript,
-con interfaz gráfica en Streamlit.
+Compilador de Compiscript hasta código intermedio (TAC): análisis léxico,
+sintáctico y semántico, y generación de cuádruplos, con interfaz gráfica en
+Streamlit. Si el programa tiene cualquier error, no se genera código intermedio.
 
 ## Qué incluye
 
@@ -32,13 +33,23 @@ con interfaz gráfica en Streamlit.
     **reciclaje** de temporales, y generador de etiquetas únicas.
   - **Memoria** (`memoria.py`): direcciones por símbolo, tamaños, alineación y
     **registros de activación** por función.
+  - **Traducción del árbol** (`listener_tac.py`): recorre el árbol y emite los
+    cuádruplos de variables y constantes, expresiones aritméticas y lógicas,
+    arreglos (`newarray`, índices, matrices), control de flujo (`if`, `while`,
+    `do-while`, `for`, `foreach`, `switch`, `break`/`continue`), funciones,
+    recursividad, `try/catch`, clases, objetos (`new`, `this`, atributos,
+    métodos) y herencia.
   - **Infraestructura del generador** (`generador.py`): el estado compartido que
     usan los generadores de expresiones, control de flujo, funciones y clases.
 - **Pipeline unificado** (`src/compiler/pipeline.py`): junta los errores de los
   tres analizadores ordenados por línea y columna, expone los ámbitos finales y
   **genera el código intermedio solo si no hubo ningún error**.
 - **IDE** (`app.py`): editor, tabla unificada de errores con métricas y filtro,
-  tabla de tokens, pestaña de ámbitos (tabla de símbolos) y árbol sintáctico.
+  tabla de tokens, pestaña de ámbitos (tabla de símbolos), árbol sintáctico,
+  **código intermedio** (instrucciones o cuádruplos, métricas de reciclaje de
+  temporales y descarga del `.tac`) y **memoria** (direcciones y registros de
+  activación). Las dos últimas avisan cuando no se generó código por haber
+  errores.
 
 ## Documentación
 
@@ -48,13 +59,27 @@ con interfaz gráfica en Streamlit.
 
 ## Uso
 
+Requiere Python 3.11 o similar. Con el entorno virtual activado:
+
 ```bash
-# Análisis por consola (tests)
-python3 -m unittest discover -s tests -v
+# Dependencias (ANTLR runtime, Streamlit y matplotlib)
+python -m pip install -r requirements.txt
+
+# Batería de tests
+python -m unittest discover -s tests -v
 
 # Interfaz gráfica
-streamlit run app.py
+python -m streamlit run app.py
 ```
+
+En el IDE: elegir un `.cps` (o un ejemplo) en la barra lateral, pulsar
+«Compilar» y revisar las pestañas. El código intermedio aparece en «Código
+intermedio» solo si no hubo ningún error léxico, sintáctico ni semántico.
+
+Tests del código intermedio: `test_tac` (instrucciones), `test_temporales`
+(reciclaje), `test_memoria` (direcciones), `test_generacion` (compuerta),
+`test_tac_expresiones`, `test_tac_controlflujo`, `test_tac_funciones`,
+`test_tac_arreglos` y `test_tac_clases`.
 
 ## Sistemas de tipos y ámbito (matriz de conformidad)
 
@@ -96,5 +121,19 @@ streamlit run app.py
 
 ## Ejemplos
 
-En `ejemplos/` hay programas válidos (`ok_*.cps`) y con errores léxicos,
-sintácticos o mixtos (`errores_*.cps`).
+En `ejemplos/` hay programas válidos (`ok_*.cps`), con errores léxicos,
+sintácticos, semánticos y mixtos (`errores_*.cps`), y uno por cada ítem de la
+generación de código intermedio (`tac_*.cps`):
+
+| Archivo | Qué muestra |
+| --- | --- |
+| `tac_01_variables.cps` | declaración y asignación de variables y constantes |
+| `tac_02_aritmeticas.cps` | precedencia, paréntesis, unario y reciclaje de temporales |
+| `tac_03_logicas.cps` | `&&`, `\|\|`, `!` y comparaciones |
+| `tac_04_control.cps` | `if/else`, `while`, `do-while`, `for`, `foreach`, `switch`, `break`, `continue` |
+| `tac_05_funciones.cps` | funciones, parámetros, retorno, `void` y función anidada |
+| `tac_06_recursividad.cps` | factorial y fibonacci |
+| `tac_07_trycatch.cps` | `try/catch` |
+| `ok_arreglos.cps` | arreglos: literal, índices, matrices |
+| `ok_clases.cps` | clases, objetos, atributos, métodos |
+| `tac_08_herencia.cps` | herencia de 3 niveles, métodos redefinidos, constructor heredado |
