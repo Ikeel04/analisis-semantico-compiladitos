@@ -114,21 +114,94 @@ L1_inicio:
 L2_fin:
 ```
 
-`break` salta a `L2_fin` y `continue` a `L1_inicio`. El generador mantiene una
-pila con esas dos etiquetas por cada ciclo abierto; como el análisis semántico
-ya garantizó que `break` y `continue` solo aparecen dentro de un ciclo, la pila
-nunca está vacía cuando se consulta.
+`break` salta a `L2_fin` y `continue` a `L1_inicio`. El generador
+mantiene una pila con esas dos etiquetas por cada ciclo abierto; como
+el análisis semántico ya garantizó que `break` y `continue` solo
+aparecen dentro de un ciclo, la pila nunca está vacía cuando se
+consulta. En el `for` y el `foreach` el "continuar" es el paso
+(`L_paso`), para no saltarse el incremento; en el `do-while`, la
+etiqueta de la condición.
 
 ### do-while
 
 Igual que el `while` pero con la condición al final, así que el cuerpo se
 ejecuta al menos una vez y el salto de regreso es un `if` en vez de un `goto`.
+La condición tiene su propia etiqueta (`L_cond`), que se emite al entrar
+su expresión: es adónde salta `continue` (no al inicio, que re-ejecutaría
+el cuerpo).
 
 ### for
 
 Se traduce como un `while` con el inicializador antes de la etiqueta de inicio
 y el paso de iteración justo antes del salto de regreso, de modo que `continue`
 no se salte el incremento.
+
+### foreach
+
+Se **desarma** en un ciclo indexado sobre `length` (§1): el índice es un
+temporal que vive todo el ciclo (por eso no se libera al comparar, y se
+recicla en el incremento):
+
+```
+             t_i = 0
+L1_inicio:
+             t_len = length arr
+             t_c = t_i < t_len
+             ifFalse t_c goto L2_fin
+             n = arr[t_i]
+             <código del cuerpo>
+L3_paso:
+             t_i = t_i + 1
+             goto L1_inicio
+L2_fin:
+```
+
+`n` ya tiene dirección real (el análisis semántico la declara en el
+ámbito del bloque). `break` salta a `L2_fin` y `continue` a `L3_paso`,
+para no saltarse el incremento.
+
+### switch
+
+El sujeto se compara con cada caso en una **cadena** (sin fall-through:
+cada caso salta al fin al terminar). El caso se evalúa **solo si los
+anteriores no cuadraron** —evaluación perezosa, como una cadena de
+`if/else`—, y el `default` es el destino natural del último "no cuadró":
+
+```
+             t = <sujeto>
+             t1 = t == valor1
+             ifFalse t1 goto L1_no
+             <código del caso 1>
+             goto L_fin
+L1_no:
+             t2 = t == valor2
+             ifFalse t2 goto L2_no
+             <código del caso 2>
+             goto L_fin
+L2_no:
+             <código del default>
+L_fin:
+```
+
+El sujeto vive en un temporal (o en su dirección) durante todo el
+`switch` y se libera al cerrarlo; cada valor de caso se libera
+después de su comparación.
+
+### try / catch
+
+```
+             <código del try>
+             goto L_fin
+L_catch:
+             <código del catch>
+L_fin:
+```
+
+El `catch` **no** es alcanzado por el flujo normal: solo una excepción
+de tiempo de ejecución (división por cero, índice fuera de rango, …)
+aterriza en `L_catch`. Compiscript no tiene `throw`, así que el
+generador solo deja dispuestos los bloques; quién salta a `L_catch`
+lo decide la máquina.
 
 ### Ternario `? :`
 

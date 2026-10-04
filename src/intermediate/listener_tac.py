@@ -35,12 +35,23 @@ Miembros de clase. Una declaración de variable o constante cuyo
 ámbito directo es la clase es parte del layout del objeto, no código
 ejecutable: no emite nada (la dirección `obj+N` la asigna memoria.py).
 
-Ganchos pendientes. Las construcciones que traducen las demás etapas
-(control de flujo: Etapa 2; llamadas: Etapa 3; clases, `new`,
-`this`, miembros e índices: Persona 3) emiten un comentario
-'pendiente' y un operando provisorio, de modo que el recorrido
-sobrevive a programas que las usan y el IDE muestra exactamente qué
-falta por traducir.
+Ganchos pendientes. Las construcciones que traducen las otras
+etapas (llamadas: Etapa 3; clases, `new`, `this`, miembros e
+índices: Persona 3) emiten un comentario 'pendiente' y un
+operando provisorio, de modo que el recorrido sobrevive a
+programas que las usan y el IDE muestra exactamente qué falta
+por traducir.
+
+Control de flujo. El walker va de abajo hacia arriba, pero cada
+constructo salta en los puntos donde su sub-árbol ya está
+traducido: la condición en el 'exit' de su expresión (o en el
+'entrar' del bloque, para el 'if' y el 'while'), el cuerpo en
+el 'entrar'/'salir' de su bloque, y la etiqueta final en el
+'salir' del constructo. El 'for' usa el mismo truco para el
+inicializador (su etiqueta de inicio se emite al traducirlo) y
+para el paso (su etiqueta se emite al ENTRAR la expresión, antes
+de su código). Cada constructo apila un marco con sus etiquetas;
+'break' y 'continue' consultan la pila de ciclos del GeneradorTAC.
 """
 
 from __future__ import annotations
@@ -74,6 +85,12 @@ class ListenerTAC(CompiscriptListener):
         # que va el walker, sin tocar la tabla de símbolos.
         self._ambitos = [gen.tabla.global_scope]
         self._consumidos: set[int] = set()    # ámbitos hijos ya usados
+        # Marcos de los constructos abiertos (cada uno apila las
+        # etiquetas que traducen sus bloques y sus saltos).
+        self._ifs: list[dict] = []            # if / else
+        self._ciclos: list[dict] = []         # while, do-while, for, foreach
+        self._switchs: list[dict] = []        # switch
+        self._trys: list[dict] = []           # try / catch
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -157,12 +174,130 @@ class ListenerTAC(CompiscriptListener):
             valores[i + 1] = destino
         self.valor_de[id(ctx)] = valores[-1]
 
+    def _clasificar_expresiones_de_for(self, for_ctx) -> dict:
+        """En el 'for', la condición es la primera expresión directa
+        y el paso, la segunda. Si solo hay una, es el paso cuando
+        tiene dos ';' directos antes ('for (init; ; paso)' o
+        'for (;; paso)') y la condición si no (0 o 1: el ';'
+        del inicializador vive dentro de su propio contexto)."""
+        encontradas: dict[str, object] = {}
+        punto_y_coma = 0
+        expresiones: list[tuple[int, object]] = []
+        for hijo in for_ctx.getChildren():
+            if (getattr(hijo, "getSymbol", None) is not None
+                    and hijo.getSymbol().text == ";"):
+                punto_y_coma += 1
+            elif (hasattr(hijo, "getRuleIndex")
+                    and hijo.getRuleIndex()
+                    == CompiscriptParser.RULE_expression):
+                expresiones.append((punto_y_coma, hijo))
+        if len(expresiones) >= 2:
+            encontradas["condicion"] = expresiones[0][1]
+            encontradas["paso"] = expresiones[1][1]
+        elif len(expresiones) == 1:
+            cuenta, expr = expresiones[0]
+            if cuenta >= 2:
+                encontradas["paso"] = expr
+            else:
+                encontradas["condicion"] = expr
+        return encontradas
+
+    def _es_condicion_de_for(self, ctx) -> bool:
+        padre = ctx.parentCtx
+        if not isinstance(padre, CompiscriptParser.ForStatementContext):
+            return False
+        return (self._clasificar_expresiones_de_for(padre)
+                .get("condicion") is ctx)
+
+    def _es_paso_de_for(self, ctx) -> bool:
+        padre = ctx.parentCtx
+        if not isinstance(padre, CompiscriptParser.ForStatementContext):
+            return False
+        return (self._clasificar_expresiones_de_for(padre)
+                .get("paso") is ctx)
+
+    def _es_condicion_de_dowhile(self, ctx) -> bool:
+        return isinstance(ctx.parentCtx,
+                          CompiscriptParser.DoWhileStatementContext)
+
+    def _es_sujeto_de_switch(self, ctx) -> bool:
+        return isinstance(ctx.parentCtx,
+                          CompiscriptParser.SwitchStatementContext)
+
+    def _es_valor_de_case(self, ctx) -> bool:
+        return isinstance(ctx.parentCtx,
+                          CompiscriptParser.SwitchCaseContext)
+
+    def _es_iterable_de_foreach(self, ctx) -> bool:
+        return isinstance(ctx.parentCtx,
+                          CompiscriptParser.ForeachStatementContext)
+
     # ------------------------------------------------------------------
     # Expresiones
     # ------------------------------------------------------------------
 
+    def enterExpression(self, ctx):
+        if self._es_paso_de_for(ctx):
+            # El paso se traduce DESPUÉS del cuerpo: esta etiqueta
+            # marca dónde empieza (y adónde salta 'continue').
+            self.gen.programa.emitir_etiqueta(
+                self._ciclos[-1]["paso"])
+        elif self._es_condicion_de_dowhile(ctx):
+            # La condición del do-while se traduce al final: aquí
+            # empieza, y es adónde salta 'continue'.
+            self.gen.programa.emitir_etiqueta(
+                self._ciclos[-1]["cond"])
+
     def exitExpression(self, ctx):
         self.valor_de[id(ctx)] = self._valor(ctx.assignmentExpr())
+        if self._es_condicion_de_for(ctx):
+            # El 'ifFalse' va justo después de la condición.
+            marco = self._ciclos[-1]
+            condicion = self.valor_de[id(ctx)]
+            self.gen.liberar(condicion)
+            self.gen.programa.emitir_salto_si_falso(
+                condicion, marco["fin"])
+        elif self._es_paso_de_for(ctx):
+            # El paso ya está traducido: vuelve al inicio y marca
+            # dónde empieza el cuerpo. Su valor ya está asignado
+            # (es una asignación), así que el temporal sobra.
+            marco = self._ciclos[-1]
+            self.gen.liberar(self.valor_de[id(ctx)])
+            programa = self.gen.programa
+            programa.emitir_salto(marco["inicio"])
+            programa.emitir_etiqueta(marco["cuerpo"])
+        elif self._es_sujeto_de_switch(ctx):
+            # El sujeto se compara con cada caso: vive todo el
+            # switch y se libera en exitSwitchStatement.
+            self._switchs[-1]["sujeto"] = self.valor_de[id(ctx)]
+        elif self._es_valor_de_case(ctx):
+            # Cadena de comparaciones: el caso se evalúa solo si
+            # los anteriores no cuadraron (§2 del doc).
+            marco = self._switchs[-1]
+            valor = self._valor(ctx)
+            condicion = self.gen.nuevo_temporal()
+            programa = self.gen.programa
+            programa.emitir_binaria("==", marco["sujeto"], valor,
+                                    condicion)
+            self.gen.liberar(valor)
+            programa.emitir_salto_si_falso(condicion, marco["no"][-1])
+            self.gen.liberar(condicion)
+        elif self._es_iterable_de_foreach(ctx):
+            # Condición del ciclo desarmado: índice < length(arreglo).
+            # Ni el índice ni el arreglo se liberan: viven todo
+            # el ciclo (el índice se recicla en el incremento).
+            marco = self._ciclos[-1]
+            arreglo = self._valor(ctx)
+            marco["arreglo"] = arreglo
+            programa = self.gen.programa
+            tamano = self.gen.nuevo_temporal()
+            programa.emitir_longitud(arreglo, tamano)
+            condicion = self.gen.nuevo_temporal()
+            programa.emitir_binaria("<", marco["indice"], tamano,
+                                    condicion)
+            self.gen.liberar(tamano)
+            programa.emitir_salto_si_falso(condicion, marco["fin"])
+            self.gen.liberar(condicion)
 
     def exitExprNoAssign(self, ctx):
         self.valor_de[id(ctx)] = self._valor(ctx.conditionalExpr())
@@ -288,6 +423,18 @@ class ListenerTAC(CompiscriptListener):
     # Declaraciones y sentencias
     # ------------------------------------------------------------------
 
+    def _emitir_inicio_de_for(self, ctx) -> None:
+        """El inicializador del 'for' ya está traducido: empieza la
+        etiqueta de inicio del ciclo (va DESPUÉS del inicializador
+        y ANTES de la condición)."""
+        padre = ctx.parentCtx
+        if not isinstance(padre, CompiscriptParser.ForStatementContext):
+            return
+        marco = self._ciclos[-1]
+        if marco["inicio_pendiente"]:
+            marco["inicio_pendiente"] = False
+            self.gen.programa.emitir_etiqueta(marco["inicio"])
+
     def _es_miembro_de_clase(self) -> bool:
         """El ámbito directo es una clase: la declaración es parte
         del layout del objeto, no código ejecutable."""
@@ -303,6 +450,7 @@ class ListenerTAC(CompiscriptListener):
         self.gen.programa.emitir_asignacion(
             self._destino(ctx.Identifier().getText()), valor)
         self.gen.liberar(valor)
+        self._emitir_inicio_de_for(ctx)
 
     def exitConstantDeclaration(self, ctx):
         if self._es_miembro_de_clase():
@@ -324,6 +472,7 @@ class ListenerTAC(CompiscriptListener):
             # expression '.' Identifier '=' expression ';': Persona 3.
             self._pendiente("asignación a propiedad (Persona 3)")
             self.gen.liberar(self._valor(exprs[1]))
+        self._emitir_inicio_de_for(ctx)
 
     def exitExpressionStatement(self, ctx):
         # La expresión ya emitió su código; si quedó un temporal
@@ -374,47 +523,218 @@ class ListenerTAC(CompiscriptListener):
         if self._es_cuerpo_de_funcion(ctx):
             return        # el ámbito de la función ya está abierto
         self._entrar_ambito("block")
+        padre = ctx.parentCtx
+        if isinstance(padre, CompiscriptParser.IfStatementContext):
+            if ctx is padre.block(0):
+                # Bloque 'then': si la condición es falsa, salta
+                # al 'else' (o al fin, si no lo hay).
+                marco = self._ifs[-1]
+                condicion = self._valor(padre.expression())
+                self.gen.liberar(condicion)
+                self.gen.programa.emitir_salto_si_falso(
+                    condicion, marco["otro"] or marco["fin"])
+            else:
+                # El bloque 'else' empieza donde aterrizó el
+                # salto del 'ifFalse'.
+                self.gen.programa.emitir_etiqueta(
+                    self._ifs[-1]["otro"])
+        elif isinstance(padre, CompiscriptParser.WhileStatementContext):
+            # El 'while': si la condición es falsa, el cuerpo
+            # no se ejecuta.
+            marco = self._ciclos[-1]
+            condicion = self._valor(padre.expression())
+            self.gen.liberar(condicion)
+            self.gen.programa.emitir_salto_si_falso(
+                condicion, marco["fin"])
+        elif isinstance(padre, CompiscriptParser.TryCatchStatementContext):
+            if ctx is padre.block(1):
+                # El 'catch' empieza donde aterrizan las
+                # excepciones de tiempo de ejecución.
+                self.gen.programa.emitir_etiqueta(
+                    self._trys[-1]["catch"])
+        elif isinstance(padre, CompiscriptParser.ForeachStatementContext):
+            # Elemento del ciclo: variable = arreglo[indice].
+            marco = self._ciclos[-1]
+            self.gen.programa.emitir_lectura_indice(
+                marco["arreglo"], marco["indice"],
+                self._destino(marco["variable"]))
 
     def exitBlock(self, ctx):
         if self._es_cuerpo_de_funcion(ctx):
             return
+        padre = ctx.parentCtx
+        programa = self.gen.programa
+        if isinstance(padre, CompiscriptParser.IfStatementContext):
+            if (ctx is padre.block(0) and len(padre.block()) > 1):
+                # Fin del 'then': con 'else', salta al fin para
+                # no caer en el bloque contrario.
+                programa.emitir_salto(self._ifs[-1]["fin"])
+        elif isinstance(padre, CompiscriptParser.WhileStatementContext):
+            programa.emitir_salto(self._ciclos[-1]["inicio"])
+        elif isinstance(padre, CompiscriptParser.ForStatementContext):
+            # Vuelve al paso (o a la condición, si no hay).
+            programa.emitir_salto(self._ciclos[-1]["volver"])
+        elif isinstance(padre, CompiscriptParser.ForeachStatementContext):
+            # Fin del cuerpo: incremento y vuelta al inicio.
+            marco = self._ciclos[-1]
+            programa.emitir_etiqueta(marco["paso"])
+            # índice = índice + 1 (recicla el propio índice).
+            incremento = self.gen.temporal_para(marco["indice"], "1")
+            programa.emitir_binaria("+", marco["indice"], "1",
+                                    incremento)
+            marco["indice"] = incremento
+            programa.emitir_salto(marco["inicio"])
+        elif isinstance(padre, CompiscriptParser.TryCatchStatementContext):
+            if ctx is padre.block(0):
+                # Fin del 'try': el flujo normal salta por
+                # encima del 'catch'.
+                programa.emitir_salto(self._trys[-1]["fin"])
         self._salir_ambito()
 
     def enterForStatement(self, ctx):
-        # El inicializador del 'for' queda fuera del bloque: el ciclo
-        # abre su propio ámbito (la variable del init vive en la
+        # El inicializador queda fuera del bloque: el ciclo abre
+        # su propio ámbito (la variable del init vive en la
         # condición, la iteración y el cuerpo, pero no después).
         self._entrar_ambito("block")
-        self._pendiente("for (Etapa 2)")
+        inicio = self.gen.nueva_etiqueta("for_inicio")
+        fin = self.gen.nueva_etiqueta("for_fin")
+        paso = self.gen.nueva_etiqueta("for_paso")
+        cuerpo = self.gen.nueva_etiqueta("for_cuerpo")
+        tiene_paso = (self._clasificar_expresiones_de_for(ctx)
+                      .get("paso") is not None)
+        # Sin paso, 'continue' y el final del cuerpo vuelven
+        # directo a la condición.
+        volver = paso if tiene_paso else inicio
+        self._ciclos.append({
+            "inicio": inicio, "fin": fin, "paso": paso,
+            "cuerpo": cuerpo, "volver": volver,
+            # Cuando hay inicializador, la etiqueta de inicio se
+            # emite al terminar de traducirlo (va después de él).
+            "inicio_pendiente": (ctx.variableDeclaration() is not None
+                                 or ctx.assignment() is not None),
+        })
+        if not self._ciclos[-1]["inicio_pendiente"]:
+            self.gen.programa.emitir_etiqueta(inicio)
+        self.gen.entrar_ciclo(volver, fin)
 
     def exitForStatement(self, ctx):
+        marco = self._ciclos.pop()
+        self.gen.programa.emitir_etiqueta(marco["fin"])
+        self.gen.salir_ciclo()
         self._salir_ambito()
 
     # ------------------------------------------------------------------
-    # Construcciones de la Etapa 2 (control de flujo): por ahora solo
-    # marcan lo pendiente; sus expresiones internas sí se traducen.
+    # Control de flujo
     # ------------------------------------------------------------------
 
     def enterIfStatement(self, ctx):
-        self._pendiente("if (Etapa 2)")
+        self._ifs.append({
+            # Solo hay etiqueta de 'else' cuando el bloque existe.
+            "otro": (self.gen.nueva_etiqueta("if_else")
+                     if len(ctx.block()) > 1 else None),
+            "fin": self.gen.nueva_etiqueta("if_fin"),
+        })
+
+    def exitIfStatement(self, ctx):
+        marco = self._ifs.pop()
+        self.gen.programa.emitir_etiqueta(marco["fin"])
 
     def enterWhileStatement(self, ctx):
-        self._pendiente("while (Etapa 2)")
+        inicio = self.gen.nueva_etiqueta("while_inicio")
+        fin = self.gen.nueva_etiqueta("while_fin")
+        self._ciclos.append({"inicio": inicio, "fin": fin})
+        self.gen.programa.emitir_etiqueta(inicio)
+        self.gen.entrar_ciclo(inicio, fin)
+
+    def exitWhileStatement(self, ctx):
+        marco = self._ciclos.pop()
+        self.gen.programa.emitir_etiqueta(marco["fin"])
+        self.gen.salir_ciclo()
 
     def enterDoWhileStatement(self, ctx):
-        self._pendiente("do-while (Etapa 2)")
+        inicio = self.gen.nueva_etiqueta("dowhile_inicio")
+        fin = self.gen.nueva_etiqueta("dowhile_fin")
+        cond = self.gen.nueva_etiqueta("dowhile_cond")
+        self._ciclos.append({"inicio": inicio, "fin": fin, "cond": cond})
+        self.gen.programa.emitir_etiqueta(inicio)
+        # 'continue' salta a la condición, que se traduce al
+        # final (su etiqueta se emite en enterExpression).
+        self.gen.entrar_ciclo(cond, fin)
+
+    def exitDoWhileStatement(self, ctx):
+        marco = self._ciclos.pop()
+        condicion = self._valor(ctx.expression())
+        self.gen.liberar(condicion)
+        # El salto de regreso es un 'if': el cuerpo se ejecuta
+        # al menos una vez.
+        self.gen.programa.emitir_salto_si(condicion, marco["inicio"])
+        self.gen.programa.emitir_etiqueta(marco["fin"])
+        self.gen.salir_ciclo()
 
     def enterForeachStatement(self, ctx):
-        self._pendiente("foreach (Etapa 2)")
+        # Se desarma en un ciclo indexado (§2 del doc): el índice
+        # es un temporal que vive todo el ciclo.
+        inicio = self.gen.nueva_etiqueta("foreach_inicio")
+        fin = self.gen.nueva_etiqueta("foreach_fin")
+        paso = self.gen.nueva_etiqueta("foreach_paso")
+        self._ciclos.append({
+            "inicio": inicio, "fin": fin, "paso": paso,
+            "indice": self.gen.nuevo_temporal(),
+            "variable": ctx.Identifier().getText(),
+            "arreglo": None,
+        })
+        marco = self._ciclos[-1]
+        programa = self.gen.programa
+        programa.emitir_asignacion(marco["indice"], "0")
+        programa.emitir_etiqueta(inicio)
+        # 'continue' salta al incremento; 'break', al fin.
+        self.gen.entrar_ciclo(paso, fin)
+
+    def exitForeachStatement(self, ctx):
+        marco = self._ciclos.pop()
+        self.gen.programa.emitir_etiqueta(marco["fin"])
+        self.gen.liberar(marco["indice"])
+        self.gen.liberar(marco["arreglo"])
+        self.gen.salir_ciclo()
 
     def enterSwitchStatement(self, ctx):
-        self._pendiente("switch (Etapa 2)")
+        self._switchs.append({
+            "sujeto": None,
+            "fin": self.gen.nueva_etiqueta("switch_fin"),
+            "no": [],       # etiquetas 'no cuadró' de los casos
+        })
+
+    def exitSwitchStatement(self, ctx):
+        marco = self._switchs.pop()
+        self.gen.programa.emitir_etiqueta(marco["fin"])
+        self.gen.liberar(marco["sujeto"])
+
+    def enterSwitchCase(self, ctx):
+        # Etiqueta a la que salta la cadena cuando este caso
+        # no cuadra.
+        self._switchs[-1]["no"].append(
+            self.gen.nueva_etiqueta("case_no"))
+
+    def exitSwitchCase(self, ctx):
+        # Fin del cuerpo del caso: salta al fin del switch y
+        # marca dónde continúa la cadena de comparaciones.
+        marco = self._switchs[-1]
+        programa = self.gen.programa
+        programa.emitir_salto(marco["fin"])
+        programa.emitir_etiqueta(marco["no"].pop())
 
     def enterTryCatchStatement(self, ctx):
-        self._pendiente("try/catch (Etapa 2)")
+        self._trys.append({
+            "catch": self.gen.nueva_etiqueta("catch"),
+            "fin": self.gen.nueva_etiqueta("try_fin"),
+        })
 
-    def enterBreakStatement(self, ctx):
-        self._pendiente("break (Etapa 2)")
+    def exitTryCatchStatement(self, ctx):
+        marco = self._trys.pop()
+        self.gen.programa.emitir_etiqueta(marco["fin"])
 
-    def enterContinueStatement(self, ctx):
-        self._pendiente("continue (Etapa 2)")
+    def exitBreakStatement(self, ctx):
+        self.gen.programa.emitir_salto(self.gen.etiqueta_salir())
+
+    def exitContinueStatement(self, ctx):
+        self.gen.programa.emitir_salto(self.gen.etiqueta_continuar())

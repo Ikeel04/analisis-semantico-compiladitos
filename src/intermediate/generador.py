@@ -35,6 +35,11 @@ class GeneradorTAC:
         self.etiquetas = GeneradorEtiquetas()
         self._pools = [PoolTemporales()]   # el de abajo es el del código global
         self._contexto: list[str] = []     # clases y funciones abiertas
+        # Ciclos abiertos: (etiqueta de continue, etiqueta de
+        # break). El análisis semántico ya garantizó que esos
+        # saltos solo aparecen dentro de un ciclo, así que la
+        # pila nunca está vacía cuando se consulta (§2 del doc).
+        self._ciclos: list[tuple[str, str]] = []
 
     @property
     def temporales(self) -> PoolTemporales:
@@ -99,6 +104,24 @@ class GeneradorTAC:
 
     def registro_de(self, nombre_cualificado: str):
         return self.resumen.registros.get(nombre_cualificado)
+
+    # ------------------------------------------------------------------
+    # Ciclos: a dónde saltan 'break' y 'continue' del ciclo abierto.
+    # 'continuar' es el punto donde se evalúa la condición (o el
+    # paso, en 'for' y 'foreach', para no saltarse el incremento).
+    # ------------------------------------------------------------------
+
+    def entrar_ciclo(self, continuar: str, salir: str) -> None:
+        self._ciclos.append((continuar, salir))
+
+    def salir_ciclo(self) -> None:
+        self._ciclos.pop()
+
+    def etiqueta_continuar(self) -> str:
+        return self._ciclos[-1][0]
+
+    def etiqueta_salir(self) -> str:
+        return self._ciclos[-1][1]
 
     def estadisticas(self) -> dict:
         """Reciclaje en el ámbito global; el de cada función queda en su marco."""
