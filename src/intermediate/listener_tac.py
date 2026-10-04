@@ -237,9 +237,13 @@ class ListenerTAC(CompiscriptListener):
 
     def enterExpression(self, ctx):
         if self._es_paso_de_for(ctx):
-            # El paso va después del cuerpo: aquí empieza.
-            self.gen.programa.emitir_etiqueta(
-                self._ciclos[-1]["paso"])
+            # En el árbol el paso viene ANTES del cuerpo, pero se ejecuta
+            # después: el flujo normal (condición verdadera, o sin
+            # condición) salta el paso hasta el cuerpo, y el paso queda
+            # como destino de 'continue' y del fin del cuerpo.
+            marco = self._ciclos[-1]
+            self.gen.programa.emitir_salto(marco["cuerpo"])
+            self.gen.programa.emitir_etiqueta(marco["paso"])
         elif self._es_condicion_de_dowhile(ctx):
             # La condición del do-while va al final.
             self.gen.programa.emitir_etiqueta(

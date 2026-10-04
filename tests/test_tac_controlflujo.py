@@ -177,6 +177,9 @@ class TestDoWhile(BaseTACControl):
 class TestFor(BaseTACControl):
 
     def test_for_completo(self):
+        """El paso aparece antes del cuerpo en el árbol pero se ejecuta
+        después: el flujo normal lo salta con 'goto cuerpo' y el paso solo
+        se alcanza desde 'continue' y desde el fin del cuerpo."""
         self.assertEqual(self.lineas_tac(
             "for (let j: integer = 0; j < 3; j = j + 1) {\n"
             "  if (j == 1) { continue; }\n"
@@ -186,6 +189,7 @@ class TestFor(BaseTACControl):
              "L1_for_inicio:",
              "t1 = global+0 < 3",
              "ifFalse t1 goto L2_for_fin",
+             "goto L4_for_cuerpo",
              "L3_for_paso:",
              "t1 = global+0 + 1",
              "global+0 = t1",
