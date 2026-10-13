@@ -92,28 +92,6 @@ class RegistroActivacion:
         self.temporales = cantidad
         self.tamano_temporales = cantidad * TAMANO_PALABRA
 
-    def filas_offsets(self) -> list[dict]:
-        """El marco celda por celda, para mostrarlo como tabla."""
-        filas = [
-            {"Offset": f"fp+{OFFSET_ENLACE_CONTROL}", "Contenido": "enlace de control",
-             "Tipo": "—", "Tamaño": f"{TAMANO_PALABRA} b"},
-            {"Offset": f"fp+{OFFSET_DIRECCION_RETORNO}", "Contenido": "dirección de retorno",
-             "Tipo": "—", "Tamaño": f"{TAMANO_PALABRA} b"},
-        ]
-        for simbolo in self.parametros:
-            filas.append({"Offset": f"fp+{simbolo.offset}",
-                          "Contenido": f"{simbolo.name} (parámetro)",
-                          "Tipo": simbolo.type, "Tamaño": f"{simbolo.tamano} b"})
-        for simbolo in self.locales:
-            filas.append({"Offset": f"fp+{simbolo.offset}",
-                          "Contenido": f"{simbolo.name} ({simbolo.kind})",
-                          "Tipo": simbolo.type, "Tamaño": f"{simbolo.tamano} b"})
-        for i in range(self.temporales):
-            filas.append({"Offset": f"fp+{self.offset_temporales + i * TAMANO_PALABRA}",
-                          "Contenido": f"temporal {i + 1}",
-                          "Tipo": "—", "Tamaño": f"{TAMANO_PALABRA} b"})
-        return filas
-
     def describe(self) -> str:
         lineas = [f"registro de activación de '{self.nombre}' "
                   f"({self.tamano_total} bytes)",
