@@ -146,6 +146,27 @@ class SymbolTable:
             lines.append(self.describe_tree(child, indent + 1))
         return "\n".join(lines)
 
+    def filas_simbolos(self, scope: Scope | None = None,
+                       ambito: str = "global") -> list[dict]:
+        """Tabla de símbolos clásica: una fila por símbolo. Aplana el árbol de
+        ámbitos sin recalcular nada; las direcciones son las que usa el TAC."""
+        scope = scope or self.global_scope
+        filas = []
+        for nombre, sym in sorted(scope.symbols.items()):
+            filas.append({
+                "Símbolo": nombre,
+                "Categoría": sym.kind,
+                "Tipo": sym.type if sym.type is not None else "—",
+                "Ámbito": ambito,
+                "Área": sym.area or "—",
+                "Dirección": sym.direccion or "—",
+                "Tamaño": f"{sym.tamano} b" if sym.tamano is not None else "—",
+            })
+        for hijo in scope.children:
+            etiqueta = hijo.name or f"{ambito}/{hijo.kind}"
+            filas += self.filas_simbolos(hijo, etiqueta)
+        return filas
+
     def filas_para_ide(self, scope: Scope | None = None, profundidad: int = 0) -> list[dict]:
         """Filas para la pestaña «Ámbitos» del IDE: una fila por ámbito, con sus
         símbolos y el tipo de cada uno. La sangría del texto indica la jerarquía.

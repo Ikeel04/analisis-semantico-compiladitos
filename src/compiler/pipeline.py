@@ -87,6 +87,7 @@ class ResultadoAnalisis:
     ambitos: list[dict] = field(default_factory=list)  # filas de la pestaña Ámbitos.
     ambitos_texto: str = ""            # descripción textual del árbol de ámbitos.
     tabla: object = None               # SymbolTable, o None si no se analizó.
+    simbolos: list[dict] = field(default_factory=list)   # una fila por símbolo
 
     # Código intermedio. Queda todo vacío si la compuerta no dejó generar.
     tac: object = None                 # ProgramaTAC
@@ -161,6 +162,7 @@ def analizar_codigo(nombre: str, codigo: str) -> ResultadoAnalisis:
         asignar_direcciones(tabla)
 
     resultado.tabla = tabla
+    resultado.simbolos = tabla.filas_simbolos()
     resultado.ambitos = tabla.filas_para_ide()
     resultado.ambitos_texto = tabla.describe_tree()
     return resultado

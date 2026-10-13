@@ -107,6 +107,35 @@ def _tabla_de_tokens(tokens: list[Token]):
     ]
 
 
+def _altura(filas, maximo: int = 560) -> int:
+    """Alto para ver todas las filas; si no caben, la tabla hace scroll."""
+    return min(maximo, 38 + 35 * max(len(filas), 1))
+
+
+LIMITE_TABLA_ESTATICA = 60
+
+
+def _tabla(filas, columnas=None, maximo: int = 560) -> None:
+    """Tabla a ancho completo, sin índice.
+
+    Para pocas filas se usa st.table: es HTML estático, así que siempre
+    renderiza todas las columnas y deja que la página haga el scroll.
+    st.dataframe dibuja sobre canvas y a veces queda colapsado cuando se
+    monta dentro de una pestaña que todavía no está activa. Para tablas
+    largas (tokens, TAC) sí conviene el dataframe, con su scroll propio.
+    """
+    if filas and len(filas) <= LIMITE_TABLA_ESTATICA:
+        st.table(filas)
+        return
+    st.dataframe(
+        filas,
+        width="stretch",
+        hide_index=True,
+        height=_altura(filas, maximo),
+        column_config=columnas,
+    )
+
+
 def _tabla_de_errores(errores: list[FilaError]):
     """Tabla de errores con el formato común exigido por la especificación."""
     return [
@@ -331,10 +360,16 @@ with tab_ambitos:
         st.info("Pulsa «Compilar» para revisar los ámbitos y la tabla de símbolos.")
     elif resultado.ambitos:
         st.caption(
-            "Árbol de ámbitos del análisis semántico: global, funciones, clases y bloques. "
-            "Cada ámbito muestra sus símbolos con tipo."
+            "Tabla de símbolos: una fila por símbolo, con su categoría, tipo, ámbito "
+            "y la dirección de memoria que usa el código intermedio."
         )
-        st.dataframe(resultado.ambitos, width="stretch", hide_index=True)
+        _tabla(resultado.simbolos)
+
+        st.caption(
+            "Árbol de ámbitos: global, funciones, clases y bloques. Demuestra el "
+            "manejo de alcances y el anidamiento de entornos."
+        )
+        _tabla(resultado.ambitos)
         with st.expander("Ver los ámbitos como texto"):
             st.code(resultado.ambitos_texto, language="text")
     else:
@@ -391,7 +426,16 @@ with tab_memoria:
             "Área global, tamaño de las instancias de cada clase y registro de "
             "activación de cada función, con la dirección de cada símbolo."
         )
-        st.dataframe(resultado.memoria_filas, width="stretch", hide_index=True)
+        _tabla(resultado.memoria_filas)
+
+        registros = resultado.memoria.registros
+        if registros:
+            st.caption("Disposición de un registro de activación, celda por celda.")
+            elegida = st.selectbox("Función", sorted(registros), label_visibility="collapsed")
+            registro = registros[elegida]
+            _tabla(registro.filas_offsets())
+            st.caption(f"Total del marco: {registro.tamano_total} bytes.")
+
         with st.expander("Ver los registros de activación como texto"):
             st.code(resultado.memoria_texto, language="text")
 
