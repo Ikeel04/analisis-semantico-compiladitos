@@ -147,26 +147,26 @@ class SymbolTable:
         return "\n".join(lines)
 
     def filas_para_ide(self, scope: Scope | None = None, profundidad: int = 0) -> list[dict]:
-        """Filas para la pestaña «Ámbitos» del IDE: una fila por ámbito, con sus
-        símbolos y el tipo de cada uno. La sangría del texto indica la jerarquía.
-        Las direcciones y la columna «Memoria» aparecen solo después de haber
-        corrido intermediate/memoria.asignar_direcciones()."""
-        scope = scope or self.global_scope
-        filas = []
-        etiqueta = ("  " * profundidad) + f"[{scope.kind}]"
-        if scope.name:
-            etiqueta += f" {scope.name}"
-
-        def describir(sym: Symbol) -> str:
-            base = f"{sym.name} ({sym.kind} · {sym.type})"
-            return f"{base} @{sym.direccion}" if sym.direccion else base
-
-        ordenados = sorted(scope.symbols.items())
-        simbolos = "; ".join(describir(sym) for _, sym in ordenados) or "—"
-        memoria = ""
-        if scope.registro is not None:
-            memoria = f"marco de {scope.registro.tamano_total} b"
-        filas.append({"Ámbito": etiqueta, "Símbolos": simbolos, "Memoria": memoria})
-        for hijo in scope.children:
-            filas += self.filas_para_ide(hijo, profundidad + 1)
-        return filas
+            """Filas para la pestaña «Ámbitos» del IDE: una fila por símbolo, con
+            columnas separadas para cada campo. La sangría del texto indica la
+            jerarquía. Las direcciones aparecen solo después de haber corrido
+            intermediate/memoria.asignar_direcciones()."""
+            scope = scope or self.global_scope
+            filas = []
+            etiqueta = ("  " * profundidad) + f"[{scope.kind}]"
+            if scope.name:
+                etiqueta += f" {scope.name}"
+    
+            for sym_name, sym in sorted(scope.symbols.items()):
+                filas.append({
+                    "Nombre": sym.name,
+                    "Tipo": sym.type or "—",
+                    "Ámbito": etiqueta,
+                    "Área": sym.area or "—",
+                    "Dirección": sym.direccion or "—",
+                    "Offset": sym.offset if sym.offset is not None else "—",
+                    "Tamaño": sym.tamano if sym.tamano is not None else "—",
+                })
+            for hijo in scope.children:
+                filas += self.filas_para_ide(hijo, profundidad + 1)
+            return filas
