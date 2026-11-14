@@ -134,7 +134,7 @@ class TestRegistrosDeActivacion(unittest.TestCase):
         self.assertIn("jr      $ra", asm)
 
     def test_llamada_apila_salta_y_desapila(self):
-        texto = lineas(compilar(self.CODIGO).asm)
+        texto = lineas(compilar(self.CODIGO).asm_sin_optimizar)
         jal = texto.index("jal     fn_suma")
         self.assertTrue(texto[jal + 1].startswith("addiu   $sp, $sp, 8"))
         self.assertTrue(any(l.startswith("move") and l.endswith("$v0") for l in texto[jal:jal + 4]))

@@ -162,21 +162,34 @@ class OptimizadorMirilla:
         return veces
 
     def ajustes_de_pila(self, lista) -> int:
-        """addiu $sp,$sp,a / sw X, o($sp)… / addiu $sp,$sp,b
-        -> addiu $sp,$sp,a+b / sw X, o-b($sp)…  (cada `param` apila por separado;
-        así una llamada de n argumentos mueve $sp una sola vez)."""
+        """addiu $sp,$sp,a / … sw X, o($sp) … / addiu $sp,$sp,b
+        -> addiu $sp,$sp,a+b / … sw X, o-b($sp) …  (cada `param` apila por
+        separado; así una llamada de n argumentos mueve $sp una sola vez).
+
+        Entre los dos ajustes puede haber cualquier instrucción que no use $sp
+        (el `li` que prepara el siguiente argumento) o que solo lo use como base
+        de un sw/lw; no puede haber etiquetas, saltos ni llamadas."""
         def es_ajuste(ins):
             return ins.op == "addiu" and ins.args[:2] == ("$sp", "$sp")
+
+        def relativo_a_sp(ins):
+            return (ins.op in ("sw", "lw") and len(ins.args) == 2
+                    and _base_memoria(ins.args[1]) == "$sp" and ins.args[0] != "$sp")
 
         for i, ins in enumerate(lista):
             if not es_ajuste(ins):
                 continue
             intermedios = []
             j = self._siguiente(lista, i)
-            while (j is not None and lista[j].op == "sw"
-                   and _base_memoria(lista[j].args[1]) == "$sp"
-                   and lista[j].args[0] != "$sp"):
-                intermedios.append(j)
+            while j is not None and not es_ajuste(lista[j]):
+                actual = lista[j]
+                if (actual.es_etiqueta or actual.destino is not None
+                        or actual.op in ("jal", "jalr", "jr")):
+                    break
+                if relativo_a_sp(actual):
+                    intermedios.append(j)
+                elif any("$sp" in a for a in actual.args):
+                    break
                 j = self._siguiente(lista, j)
             if j is None or not es_ajuste(lista[j]):
                 continue
@@ -184,7 +197,7 @@ class OptimizadorMirilla:
             total = int(ins.args[2]) + b
             for k in intermedios:
                 desplazamiento = int(_MEMORIA.match(lista[k].args[1]).group(1)) - b
-                lista[k] = Instr("sw", (lista[k].args[0], f"{desplazamiento}($sp)"),
+                lista[k] = Instr(lista[k].op, (lista[k].args[0], f"{desplazamiento}($sp)"),
                                  lista[k].comentario)
             del lista[j]
             if total == 0 and not intermedios:

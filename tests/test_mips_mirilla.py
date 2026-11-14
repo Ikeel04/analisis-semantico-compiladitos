@@ -91,6 +91,25 @@ class TestReglas(unittest.TestCase):
                                       "sw      $t1, 0($sp)"])
         self.assertEqual(aplicadas["Fusión de ajustes de pila"], 1)
 
+    def test_fusion_con_instrucciones_que_no_usan_sp(self):
+        salida, _ = self.optimizar(
+            I("li", "$a2", 5), I("addiu", "$sp", "$sp", -4), I("sw", "$a2", "0($sp)"),
+            I("li", "$a2", 6), I("addiu", "$sp", "$sp", -4), I("sw", "$a2", "0($sp)"),
+            I("jal", "fn_f"))
+        self.assertEqual(salida[:5], ["li      $a2, 5", "addiu   $sp, $sp, -8",
+                                      "sw      $a2, 4($sp)", "li      $a2, 6",
+                                      "sw      $a2, 0($sp)"])
+
+    def test_fusion_no_cruza_llamadas_ni_otros_usos_de_sp(self):
+        salida, _ = self.optimizar(
+            I("addiu", "$sp", "$sp", -4), I("jal", "fn_f"), I("addiu", "$sp", "$sp", 4),
+            I("addiu", "$sp", "$sp", -4), I("sb", "$t0", "0($sp)"),
+            I("addiu", "$sp", "$sp", -4))
+        # El +4 de después del jal y el -4 siguiente se anulan; el primer ajuste
+        # no cruza el jal y el sb (no es sw/lw) corta la fusión del último.
+        self.assertEqual(salida, ["addiu   $sp, $sp, -4", "jal     fn_f",
+                                  "sb      $t0, 0($sp)", "addiu   $sp, $sp, -4"])
+
     def test_ajustes_que_se_anulan_desaparecen(self):
         salida, _ = self.optimizar(I("addiu", "$sp", "$sp", -8),
                                    I("addiu", "$sp", "$sp", 8), I("jr", "$ra"))
