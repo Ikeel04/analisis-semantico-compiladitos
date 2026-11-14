@@ -1,4 +1,4 @@
-"""Compilación unificada de Compiscript: análisis + código intermedio.
+"""Compilación unificada de Compiscript: análisis, código intermedio y MIPS.
 
 Corre los tres analizadores sobre el mismo código y junta sus errores en un
 solo listado, ordenado por línea y columna y con un formato común listo para
@@ -12,12 +12,14 @@ mostrar en la interfaz:
     resultado.tokens       # lista de Token (de lexico), para la tabla
     resultado.arbol        # árbol sintáctico como texto, para visualizarlo
     resultado.tac          # ProgramaTAC, o None si no se generó
+    resultado.ensamblador  # ResultadoBackend (MIPS), o None si no se generó
 
 Hay dos compuertas distintas: el análisis semántico corre si el sintáctico no
 falló (sobre un árbol incompleto no tiene sentido chequear tipos), y la
 generación de código intermedio corre solo si no hubo NINGÚN error de ningún
 tipo, como exige el enunciado. La segunda es más estricta: basta un error
-semántico, con el árbol perfecto, para no generar nada.
+semántico, con el árbol perfecto, para no generar nada. El ensamblador se
+genera a partir del TAC, así que hereda esa misma compuerta.
 """
 
 import os
@@ -32,7 +34,7 @@ from antlr4 import ParseTreeWalker
 # entrada lo haga.
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 _SRC = os.path.dirname(_AQUI)
-for _paquete in ("parser", "lexico", "semantic", "intermediate"):
+for _paquete in ("parser", "lexico", "semantic", "intermediate", "backend"):
     _ruta = os.path.join(_SRC, _paquete)
     if _ruta not in sys.path:
         sys.path.insert(0, _ruta)
@@ -46,6 +48,8 @@ from parse import (
 from listener import SemanticListener
 from generador import generar_codigo_intermedio
 from memoria import asignar_direcciones
+from backend import generar_ensamblador
+from activacion import construir_arbol
 
 # Mensaje que exige la especificación cuando el archivo no tiene errores.
 MENSAJE_EXITO = (
@@ -58,6 +62,12 @@ MENSAJE_TAC_BLOQUEADO = (
     "No se generó código intermedio porque el programa tiene errores. "
     "La representación intermedia solo se produce cuando el análisis léxico, "
     "sintáctico y semántico termina sin reportar ninguno."
+)
+
+MENSAJE_ASM_BLOQUEADO = (
+    "No se generó código ensamblador porque el programa tiene errores. "
+    "El ensamblador se produce a partir del código intermedio, que solo existe "
+    "cuando el análisis termina sin errores."
 )
 
 
@@ -97,6 +107,11 @@ class ResultadoAnalisis:
     memoria_texto: str = ""
     temporales: dict = field(default_factory=dict)         # métricas del reciclaje
 
+    # Ensamblador MIPS (generado a partir del TAC) y ejecución del TAC para el
+    # árbol de activación. También quedan en None si la compuerta no dejó pasar.
+    ensamblador: object = None         # ResultadoBackend
+    ejecucion: object = None           # ResultadoEjecucion
+
     @property
     def es_valido(self) -> bool:
         """True si no se encontró ningún error léxico, sintáctico o semántico."""
@@ -106,6 +121,10 @@ class ResultadoAnalisis:
     def genero_tac(self) -> bool:
         """True si la compuerta dejó pasar y se produjo código intermedio."""
         return self.tac is not None
+
+    @property
+    def genero_asm(self) -> bool:
+        return self.ensamblador is not None
 
 
 def analizar_codigo(nombre: str, codigo: str) -> ResultadoAnalisis:
@@ -155,6 +174,11 @@ def analizar_codigo(nombre: str, codigo: str) -> ResultadoAnalisis:
         resultado.memoria_filas = generador.resumen.filas_para_ide()
         resultado.memoria_texto = generador.resumen.describe()
         resultado.temporales = generador.estadisticas()
+        resultado.ensamblador = generar_ensamblador(
+            generador.programa, tabla, generador.resumen)
+        resultado.ejecucion = construir_arbol(
+            generador.programa, tabla, generador.resumen,
+            resultado.ensamblador.marcos)
     else:
         # Las direcciones no son código intermedio sino información de la tabla
         # de símbolos, así que se calculan aunque el programa no compile.

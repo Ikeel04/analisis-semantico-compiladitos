@@ -82,6 +82,20 @@ class TestEstructura(unittest.TestCase):
         self.assertIn("[pendiente]", resultado.asm)
 
 
+class TestCompuerta(unittest.TestCase):
+
+    def test_con_errores_no_hay_ensamblador(self):
+        resultado = analizar_codigo("test.cps", "let x: integer = true; print(y);")
+        self.assertFalse(resultado.genero_asm)
+        self.assertIsNone(resultado.ejecucion)
+
+    def test_sin_errores_hay_ensamblador_y_arbol(self):
+        resultado = analizar_codigo("test.cps", "let x: integer = 1; print(x);")
+        self.assertTrue(resultado.genero_asm)
+        self.assertIn("main:", resultado.ensamblador.asm)
+        self.assertEqual(resultado.ejecucion.salida, ["1"])
+
+
 class TestRegistrosDeActivacion(unittest.TestCase):
 
     CODIGO = """

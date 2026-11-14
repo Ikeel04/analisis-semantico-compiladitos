@@ -4,7 +4,9 @@ Permite seleccionar un archivo .cps, escribir código directamente o cargar un
 ejemplo, y ejecutar el análisis con el botón «Compilar». Los tres analizadores
 (léxico, sintáctico y semántico) corren juntos: sus errores se muestran en una
 tabla unificada y el árbol sintáctico y los ámbitos (tabla de símbolos) también
-tienen su pestaña en la interfaz.
+tienen su pestaña en la interfaz. Si no hubo errores se muestran además el
+código intermedio, el ensamblador MIPS (con y sin optimización de mirilla), la
+selección de registros y el árbol de activación.
 
 Uso:
     streamlit run app.py
@@ -26,6 +28,7 @@ import streamlit as st
 
 from arbol import figura_arbol
 from pipeline import (
+    MENSAJE_ASM_BLOQUEADO,
     MENSAJE_EXITO,
     MENSAJE_TAC_BLOQUEADO,
     FilaError,
@@ -213,7 +216,7 @@ st.session_state.setdefault("analizado", None)
 
 with st.sidebar:
     st.header("Compiscript")
-    st.caption("Analizador léxico, sintáctico y semántico")
+    st.caption("Compilador: análisis, código intermedio y ensamblador MIPS")
 
     subido = st.file_uploader("Abrir archivo .cps", type=["cps"])
     if subido is not None:
@@ -264,7 +267,8 @@ resultado = st.session_state["resultado"]
 
 _mostrar_barra_estado(nombre, resultado, codigo)
 
-tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_tac, tab_memoria, tab_demo_ts = st.tabs(
+(tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_tac, tab_memoria,
+ tab_asm, tab_registros, tab_activacion, tab_demo_ts) = st.tabs(
     [
         "Editor",
         "Errores",
@@ -273,6 +277,9 @@ tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_tac, tab_memori
         "Árbol",
         "Código intermedio",
         "Memoria",
+        "Ensamblador",
+        "Registros",
+        "Activación",
         "Demo tabla de símbolos",
     ]
 )
@@ -394,6 +401,131 @@ with tab_memoria:
         st.dataframe(resultado.memoria_filas, width="stretch", hide_index=True)
         with st.expander("Ver los registros de activación como texto"):
             st.code(resultado.memoria_texto, language="text")
+
+with tab_asm:
+    if resultado is None:
+        st.info("Pulsa «Compilar» para generar el código ensamblador.")
+    elif not resultado.genero_asm:
+        st.warning(MENSAJE_ASM_BLOQUEADO)
+    else:
+        asm = resultado.ensamblador
+        antes, despues = asm.instrucciones_antes, asm.instrucciones_despues
+        col_antes, col_despues, col_ahorro, col_reglas = st.columns(4)
+        col_antes.metric("Instrucciones sin optimizar", antes)
+        col_despues.metric("Instrucciones optimizadas", despues,
+                           delta=despues - antes, delta_color="inverse")
+        col_ahorro.metric("Reducción", f"{(antes - despues) * 100 / antes:.1f} %" if antes else "0 %")
+        col_reglas.metric("Transformaciones aplicadas", sum(asm.mirilla.values()))
+
+        st.caption(
+            "MIPS32 generado a partir del código intermedio. Se ensambla y ejecuta "
+            "en MARS 4.5 (`java -jar Mars4_5.jar nc programa.asm`) o en SPIM."
+        )
+        vista = st.radio(
+            "Vista del ensamblador",
+            ["Optimizado", "Sin optimizar", "Comparar"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if vista == "Optimizado":
+            st.code(asm.asm, language="text", height=460)
+        elif vista == "Sin optimizar":
+            st.code(asm.asm_sin_optimizar, language="text", height=460)
+        else:
+            col_izq, col_der = st.columns(2)
+            with col_izq:
+                st.markdown("**Sin optimizar**")
+                st.code(asm.asm_sin_optimizar, language="text", height=460)
+            with col_der:
+                st.markdown("**Con optimización de mirilla**")
+                st.code(asm.asm, language="text", height=460)
+
+        st.download_button(
+            "Descargar ensamblador (.asm)",
+            data=asm.asm,
+            file_name=f"{Path(nombre).stem}.asm",
+            mime="text/plain",
+        )
+
+        st.subheader("Optimización por mirilla")
+        st.dataframe(
+            [{"Transformación": regla, "Veces aplicada": veces}
+             for regla, veces in asm.mirilla.items()],
+            width="stretch",
+            hide_index=True,
+        )
+
+        if asm.pendientes:
+            with st.expander(f"Instrucciones aún sin traducir ({len(asm.pendientes)})"):
+                st.caption("Aparecen en el .asm como comentario `# [pendiente]`.")
+                st.code("\n".join(asm.pendientes), language="text")
+
+with tab_registros:
+    if resultado is None:
+        st.info("Pulsa «Compilar» para ver la selección de registros.")
+    elif not resultado.genero_asm:
+        st.warning(MENSAJE_ASM_BLOQUEADO)
+    else:
+        asm = resultado.ensamblador
+        st.caption(
+            "Algoritmo getReg con descriptores de registro y de dirección. Registros "
+            "asignables: `$t0`–`$t9` y `$s0`–`$s6`. En el descriptor, «*» marca un "
+            "valor que solo está en el registro (la memoria todavía no lo tiene)."
+        )
+        st.dataframe(asm.filas_registros(), width="stretch", hide_index=True)
+
+        unidades = list(asm.registros)
+        unidad = st.selectbox("Unidad", unidades, index=0)
+        st.dataframe(
+            [fila for fila in asm.traza if fila["Unidad"] == unidad],
+            width="stretch",
+            hide_index=True,
+            column_config={"MIPS": st.column_config.TextColumn(width="large")},
+        )
+
+with tab_activacion:
+    if resultado is None:
+        st.info("Pulsa «Compilar» para construir el árbol de activación.")
+    elif not resultado.genero_asm:
+        st.warning(MENSAJE_ASM_BLOQUEADO)
+    else:
+        ejecucion = resultado.ejecucion
+        asm = resultado.ensamblador
+        col_act, col_prof, col_pasos = st.columns(3)
+        col_act.metric("Activaciones", ejecucion.activaciones)
+        col_prof.metric("Profundidad máxima", ejecucion.profundidad_maxima)
+        col_pasos.metric("Instrucciones TAC ejecutadas", ejecucion.pasos)
+        if ejecucion.error:
+            st.error(ejecucion.error)
+
+        st.subheader("Árbol de activación")
+        st.caption(
+            "Se obtiene ejecutando el código intermedio: cada nodo es una llamada, "
+            "con sus argumentos y el valor que devolvió, y es hija de quien la hizo."
+        )
+        if ejecucion.raiz.hijos:
+            st.graphviz_chart(ejecucion.como_dot(), width="stretch")
+        with st.expander("Ver el árbol como texto", expanded=not ejecucion.raiz.hijos):
+            st.code(ejecucion.como_texto(), language="text")
+
+        st.subheader("Salida esperada")
+        st.caption("Lo que debe imprimir el .asm al ejecutarlo en MARS.")
+        st.code("\n".join(ejecucion.salida) or "(el programa no imprime nada)",
+                language="text")
+
+        st.subheader("Registros de activación en MIPS")
+        if asm.marcos:
+            st.caption(
+                "Desplazamientos desde `$fp`. Los argumentos quedan sobre el marco "
+                "(los apiló quien llamó) y el prólogo los copia a su celda."
+            )
+            funcion = st.selectbox("Función", list(asm.marcos))
+            st.dataframe(asm.marcos[funcion].filas_para_ide(), width="stretch",
+                         hide_index=True)
+            with st.expander("Ver todos los marcos como texto"):
+                st.code(asm.marcos_texto(), language="text")
+        else:
+            st.write("El programa no declara funciones: todo corre en main.")
 
 with tab_demo_ts:
     st.caption(
