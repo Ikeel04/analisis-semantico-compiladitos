@@ -82,6 +82,32 @@ class TestEstructura(unittest.TestCase):
         self.assertIn("[pendiente]", resultado.asm)
 
 
+class TestExtensiones(unittest.TestCase):
+
+    def test_extension_registra_manejador_y_rutina(self):
+        import extensiones
+        import tac as T
+
+        def emitir_rutina(programa):
+            programa.etiqueta("__prueba")
+            programa.emitir("jr", "$ra")
+
+        def registrar(traductor):
+            def etiqueta(c):
+                traductor.mips.etiqueta(c.arg1)
+                traductor.mips.emitir("jal", traductor.mips.usar_rutina("__prueba", emitir_rutina))
+            traductor.manejadores[T.ETIQUETA] = etiqueta
+
+        extensiones.EXTENSIONES.append(registrar)
+        try:
+            resultado = compilar("let a: integer = 1; if (a > 0) { print(a); }")
+        finally:
+            extensiones.EXTENSIONES.remove(registrar)
+        self.assertIn("__prueba:", resultado.asm)
+        self.assertEqual(resultado.asm.count("__prueba:"), 1)
+        self.assertNotIn("[pendiente] L", resultado.asm_sin_optimizar)
+
+
 class TestCompuerta(unittest.TestCase):
 
     def test_con_errores_no_hay_ensamblador(self):

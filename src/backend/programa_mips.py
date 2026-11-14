@@ -86,6 +86,8 @@ class ProgramaMIPS:
     texto: list[Instr] = field(default_factory=list)
     tamano_globales: int = 0
     cadenas: dict = field(default_factory=dict)   # literal (con comillas) -> etiqueta
+    rutinas: dict = field(default_factory=dict)   # nombre -> emisor(programa)
+    datos_extra: list = field(default_factory=list)  # líneas .data de las rutinas
 
     def emitir(self, op: str, *args, comentario: str = "") -> Instr:
         instr = Instr(op, tuple(str(a) for a in args), comentario)
@@ -104,6 +106,22 @@ class ProgramaMIPS:
             self.cadenas[literal] = f"__str_{len(self.cadenas)}"
         return self.cadenas[literal]
 
+    def usar_rutina(self, nombre: str, emisor) -> str:
+        """Pide una rutina de soporte; se emite una sola vez al final del
+        programa. Devuelve su etiqueta, para el `jal`."""
+        self.rutinas.setdefault(nombre, emisor)
+        return nombre
+
+    def emitir_rutinas(self) -> None:
+        emitidas = set()
+        # Una rutina puede pedir otra mientras se emite: se repite hasta cubrirlas.
+        while set(self.rutinas) - emitidas:
+            for nombre in list(self.rutinas):
+                if nombre not in emitidas:
+                    emitidas.add(nombre)
+                    self.comentario(f"rutina de soporte {nombre}")
+                    self.rutinas[nombre](self)
+
     def seccion_datos(self) -> list[str]:
         lineas = ["        .data",
                   "        .align 3",
@@ -114,6 +132,7 @@ class ProgramaMIPS:
             lineas.append(f"{etiqueta}: .asciiz {literal}")
         lineas += ['__verdadero: .asciiz "true"',
                    '__falso: .asciiz "false"']
+        lineas += self.datos_extra
         return lineas
 
     def como_texto(self, texto: list[Instr] | None = None) -> str:

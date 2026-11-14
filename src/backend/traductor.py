@@ -24,6 +24,7 @@ if _INTERMEDIO not in sys.path:
     sys.path.insert(0, _INTERMEDIO)
 
 import tac as T
+from extensiones import aplicar as aplicar_extensiones
 from marcos import construir_marco, emitir_epilogo, emitir_prologo, es_metodo
 from programa_mips import ProgramaMIPS, etiqueta_fin, etiqueta_funcion
 from registros import AsignadorRegistros
@@ -106,6 +107,8 @@ class TraductorMIPS:
         }
         for op in ARITMETICAS | RELACIONALES | LOGICAS:
             self.manejadores[op] = self.binaria
+        # Partes 2 y 3: agregan manejadores y reemplazan los puntos de extensión.
+        aplicar_extensiones(self)
 
         # Estado de la unidad en curso.
         self.unidad = None
@@ -140,6 +143,7 @@ class TraductorMIPS:
             emitir_prologo(self.mips, marco)
             self._traducir_unidad(unidad, marco)
             emitir_epilogo(self.mips, marco)
+        self.mips.emitir_rutinas()
         return self.mips
 
     def _traducir_unidad(self, unidad, marco) -> None:
