@@ -79,12 +79,6 @@ class Instr:
         return Instr(self.op, tuple(args), self.comentario)
 
 
-def _escapar(texto: str) -> str:
-    """El literal del TAC trae sus comillas; .asciiz acepta las mismas
-    secuencias de escape que Compiscript (\\n, \\t, \\")."""
-    return texto
-
-
 @dataclass
 class ProgramaMIPS:
     """Secciones .data y .text del programa generado."""
