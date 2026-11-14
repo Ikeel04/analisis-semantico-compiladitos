@@ -128,7 +128,11 @@ class TestRegistrosDeActivacion(unittest.TestCase):
                              and "param" in l), 2)
 
     def test_return_salta_al_epilogo(self):
-        self.assertIn("j       fn_suma_fin", compilar(self.CODIGO).asm)
+        # Sin optimizar está el salto; la mirilla lo quita porque el epílogo
+        # es la línea siguiente.
+        resultado = compilar(self.CODIGO)
+        self.assertIn("j       fn_suma_fin", resultado.asm_sin_optimizar)
+        self.assertNotIn("j       fn_suma_fin", resultado.asm)
 
     def test_boolean_en_marco_usa_byte(self):
         asm = compilar("""

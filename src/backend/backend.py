@@ -22,6 +22,7 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 if _AQUI not in sys.path:
     sys.path.insert(0, _AQUI)
 
+from mirilla import OptimizadorMirilla
 from traductor import TraductorMIPS
 
 
@@ -67,6 +68,7 @@ def generar_ensamblador(programa_tac, tabla, resumen) -> ResultadoBackend:
         registros=traductor.estadisticas_registros,
         pendientes=traductor.pendientes,
     )
-    resultado.asm = resultado.asm_sin_optimizar
-    resultado.instrucciones_despues = resultado.instrucciones_antes
+    optimizado, resultado.mirilla = OptimizadorMirilla().optimizar(mips.texto)
+    resultado.asm = mips.como_texto(optimizado)
+    resultado.instrucciones_despues = _contar(optimizado)
     return resultado
