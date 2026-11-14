@@ -602,6 +602,8 @@ el IDE aunque el programa todavía no compile.
 - **No hay optimización de mirilla** ni eliminación de saltos redundantes: el
   TAC se emite tal como sale de la traducción. El alcance del proyecto llega
   hasta la representación intermedia.
+  *(Proyecto 3: la mirilla se aplica sobre el ensamblador MIPS generado; ver
+  `docs/DISENO_MIPS.md` §7. El TAC sigue sin optimizarse.)*
 - **El enlace de los métodos es estático.** `obj.m()` llama a la versión de `m`
   que declara la clase *estática* de `obj` (o su ancestro más cercano). Si una
   variable de tipo `Animal` guarda un `Perro` que redefine `m`, se llama a

@@ -228,6 +228,19 @@ programa y registra cada activación: función, argumentos, valor devuelto,
 profundidad y tamaño del marco. El IDE lo dibuja y muestra la **salida
 esperada**, que se compara con la de MARS.
 
+El intérprete usa el mismo modelo de memoria que el backend (un marco por
+activación con sus `fp+N` y temporales; las variables capturadas se buscan en
+la activación más reciente de la función que las declara) y aritmética de 32
+bits como MIPS. Tiene topes de pasos (200 000), de profundidad (180) y de
+nodos dibujados (300) para que un ciclo infinito o una recursión sin caso base
+no congelen la interfaz.
+
+Excepciones: una división por cero o un índice fuera de rango saltan al
+`catch` que protege la instrucción. Si el TAC trae los marcadores
+`# try Lk_catch` y `# fin try Lk_catch` (comentarios), se usa el `try` más
+interno que encierra la instrucción; si no, el patrón `goto L_fin` /
+`L_catch:` de la traducción del `try`.
+
 ---
 
 ## 6. Traducción por instrucción (`traductor.py`)
@@ -256,7 +269,18 @@ Los manejadores de la parte 1:
 
 Las operaciones sin manejador se emiten como comentario
 `# [pendiente] <cuádruplo>` y se listan como advertencia en el IDE. Cada parte
-registra los suyos en `TraductorMIPS.manejadores`:
+escribe su propio módulo con una función `registrar(traductor)` y la agrega a
+`EXTENSIONES` en `src/backend/extensiones.py`; ahí agrega manejadores a
+`traductor.manejadores` y reemplaza los métodos de extensión
+(`antes_de_dividir`, `operando_especial`, `asignar_especial`, `concatenar`,
+`imprimir_especial`). Nadie necesita editar `traductor.py`.
+
+Las rutinas en tiempo de ejecución (concatenar, reservar memoria, lanzar una
+excepción) se piden con `traductor.mips.usar_rutina(nombre, emisor)`: se emiten
+una sola vez, al final del segmento de texto, y solo si algún manejador las
+usó. Sus datos van en `traductor.mips.datos_extra`.
+
+Reparto de manejadores:
 
 | Parte 2 (control y excepciones) | Parte 3 (datos compuestos) |
 |---|---|
@@ -286,7 +310,7 @@ después y cuántas veces se aplicó cada regla.
 | 6 | Código inalcanzable | `j L1` / `addu …` (sin etiqueta) | `j L1` |
 | 7 | Identidades algebraicas | `addiu $t0, $t1, 0`, `mul $t0, $t1, 1` | `move $t0, $t1` |
 | 8 | Reducción de fuerza | `mul $t0, $t1, 8` | `sll $t0, $t1, 3` |
-| 9 | Fusión de ajustes de pila | `addiu $sp, $sp, -4` ×2 | `addiu $sp, $sp, -8` |
+| 9 | Fusión de ajustes de pila | `addiu $sp,$sp,-4` / `sw a,0($sp)` / `li …` / `addiu $sp,$sp,-4` / `sw b,0($sp)` | `addiu $sp,$sp,-8` / `sw a,4($sp)` / `li …` / `sw b,0($sp)` |
 | 10 | Salto sobre salto | `beqz $t0, L1` / `j L2` / `L1:` | `bnez $t0, L2` / `L1:` |
 | 11 | Etiquetas sin uso | `L7_if_fin:` sin referencias | — |
 
@@ -316,4 +340,40 @@ error léxico, sintáctico o semántico no hay TAC, y sin TAC no hay ensamblador
 | `src/backend/traductor.py` | `TraductorMIPS`: manejadores por cuádruplo |
 | `src/backend/mirilla.py` | optimizador de mirilla |
 | `src/backend/activacion.py` | intérprete del TAC y árbol de activación |
+| `src/backend/extensiones.py` | registro de extensiones de las partes 2 y 3 |
 | `src/backend/backend.py` | punto de entrada `generar_ensamblador` |
+
+Tests: `test_mips_registros` (descriptores, getReg, vida y bloques),
+`test_mips_traductor` (marcos, llamadas, expresiones, compuerta y ejecución en
+MARS), `test_mips_mirilla` (cada regla y equivalencia en MARS),
+`test_mips_activacion` (árbol, salida y límites) y `test_mips_ejemplos` (todo
+`ejemplos/asm_*.cps` en MARS contra la salida esperada).
+
+Los tests que ejecutan MARS se saltan si no está la variable `MARS_JAR`:
+
+```bash
+# Windows (PowerShell): $env:MARS_JAR = "C:\ruta\Mars4_5.jar"
+export MARS_JAR=/ruta/Mars4_5.jar
+python -m unittest discover -s tests -v
+```
+
+---
+
+## 10. Estado por parte
+
+| Rúbrica | Pts | Parte | Estado |
+|---|---|---|---|
+| Selección de registros | 4 | 1 | listo (`registros.py`, `vida.py`, pestaña Registros) |
+| Registros y árboles de activación | 5 | 1 | listo (`marcos.py`, `activacion.py`, pestaña Activación) |
+| Variables y constantes | 1 | 1 | listo |
+| Expresiones aritméticas | 1 | 1 | listo (enteros y float) |
+| Expresiones lógicas | 1 | 1 | listo |
+| Optimización por mirilla (≥ 6) | 3 | 1 | listo (11 reglas) |
+| Ensamblador/simulador compatible | 1 | 1 | listo (MARS 4.5, tests automáticos) |
+| Sentencias de control | 3 | 2 | pendiente: `label`, `goto`, `if`, `ifFalse` |
+| Funciones y parámetros | 2 | 1 + 2 | convención de llamada lista; falta enlace de acceso (variables capturadas) |
+| Recursividad | 2 | 1 + 2 | marcos listos; falta control de flujo para el caso base |
+| try / catch | 2 | 2 | pendiente |
+| Arreglos | 1 | 3 | pendiente |
+| Clases y objetos | 2 | 3 | celda de `this` lista; faltan `new`, `=.`, `.=`, `obj+N` |
+| Herencia | 2 | 3 | pendiente (depende de clases) |

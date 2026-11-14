@@ -41,6 +41,21 @@ Streamlit. Si el programa tiene cualquier error, no se genera código intermedio
     métodos) y herencia.
   - **Infraestructura del generador** (`generador.py`): el estado compartido que
     usan los generadores de expresiones, control de flujo, funciones y clases.
+- **Generación de código ensamblador MIPS32** (`src/backend/`), a partir del
+  TAC:
+  - **Selección de registros** (`registros.py`, `vida.py`): algoritmo getReg con
+    descriptores de registro y de dirección, bloques básicos y análisis de vida.
+  - **Registros de activación** (`marcos.py`): marco en la pila con enlace de
+    control, dirección de retorno, parámetros, locales, temporales y receptor;
+    prólogo, epílogo y convención de llamada.
+  - **Traducción** (`traductor.py`, `tipos.py`): variables y constantes,
+    expresiones aritméticas (enteros y float), lógicas y relacionales, `print`,
+    llamadas y retornos.
+  - **Optimización por mirilla** (`mirilla.py`): 11 transformaciones.
+  - **Árbol de activación** (`activacion.py`): intérprete del TAC que registra
+    cada llamada y produce la salida esperada.
+  - **Extensiones** (`extensiones.py`): donde se enchufan control de flujo,
+    try/catch, arreglos, clases y cadenas.
 - **Pipeline unificado** (`src/compiler/pipeline.py`): junta los errores de los
   tres analizadores ordenados por línea y columna, expone los ámbitos finales y
   **genera el código intermedio solo si no hubo ningún error**.
@@ -49,13 +64,19 @@ Streamlit. Si el programa tiene cualquier error, no se genera código intermedio
   **código intermedio** (instrucciones o cuádruplos, métricas de reciclaje de
   temporales y descarga del `.tac`) y **memoria** (direcciones y registros de
   activación). Las dos últimas avisan cuando no se generó código por haber
-  errores.
+  errores. Además: **ensamblador** (optimizado, sin optimizar o comparados,
+  reglas de mirilla aplicadas y descarga del `.asm`), **registros** (traza
+  cuádruplo → MIPS con el descriptor de registros) y **activación** (árbol de
+  activación, salida esperada y marcos MIPS).
 
 ## Documentación
 
 - [`docs/DISENO_TAC.md`](docs/DISENO_TAC.md) — diseño del lenguaje intermedio:
   juego de instrucciones, esquemas de traducción, algoritmo de reciclaje de
   temporales, modelo de memoria, registros de activación y supuestos.
+- [`docs/DISENO_MIPS.md`](docs/DISENO_MIPS.md) — diseño del backend MIPS:
+  organización del programa, selección de registros, marcos en la pila,
+  traducción por instrucción, mirilla, extensiones y estado por parte.
 
 ## Uso
 
@@ -70,6 +91,23 @@ python -m unittest discover -s tests -v
 
 # Interfaz gráfica
 python -m streamlit run app.py
+```
+
+### Ejecutar el ensamblador en MARS
+
+El `.asm` que se descarga del IDE se ensambla y ejecuta en MARS 4.5
+(<https://github.com/dpetersanderson/MARS/releases>, requiere Java):
+
+```bash
+java -jar Mars4_5.jar nc programa.asm
+```
+
+Los tests que comparan la salida de MARS con la esperada corren si la variable
+`MARS_JAR` apunta al `.jar` (si no, se saltan):
+
+```bash
+export MARS_JAR=/ruta/Mars4_5.jar      # PowerShell: $env:MARS_JAR = "C:\ruta\Mars4_5.jar"
+python -m unittest discover -s tests -v
 ```
 
 En el IDE: elegir un `.cps` (o un ejemplo) en la barra lateral, pulsar
@@ -137,3 +175,7 @@ generación de código intermedio (`tac_*.cps`):
 | `ok_arreglos.cps` | arreglos: literal, índices, matrices |
 | `ok_clases.cps` | clases, objetos, atributos, métodos |
 | `tac_08_herencia.cps` | herencia de 3 niveles, métodos redefinidos, constructor heredado |
+| `asm_01_variables.cps` | ensamblador: variables y constantes (byte, palabra, float) |
+| `asm_02_expresiones.cps` | ensamblador: aritméticas, lógicas, float, reducción de fuerza |
+| `asm_03_registros.cps` | ensamblador: presión de registros y desalojos de getReg |
+| `asm_04_activacion.cps` | ensamblador: marcos, parámetros de varios tipos, llamadas anidadas |
