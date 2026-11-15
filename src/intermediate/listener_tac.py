@@ -993,9 +993,14 @@ class ListenerTAC(CompiscriptListener):
             "catch": self.gen.nueva_etiqueta("catch"),
             "fin": self.gen.nueva_etiqueta("try_fin"),
         })
+        # Marcador de inicio: con él el intérprete y el backend saben
+        # qué catch protege el bloque.
+        self.gen.programa.emitir_comentario(f"try {self._trys[-1]['catch']}")
 
     def exitTryCatchStatement(self, ctx):
         marco = self._trys.pop()
+        # Marcador de fin: justo antes del goto que salta por encima del catch.
+        self.gen.programa.emitir_comentario(f"fin try {marco['catch']}")
         self.gen.programa.emitir_etiqueta(marco["fin"])
 
     def exitBreakStatement(self, ctx):

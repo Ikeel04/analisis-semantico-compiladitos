@@ -304,10 +304,12 @@ class TestTryCatch(BaseTACControl):
             "} catch (e) {\n"
             "  print(2);\n"
             "}"),
-            ["print 1",
+            ["# try L1_catch",
+             "print 1",
              "goto L2_try_fin",
              "L1_catch:",
              "print 2",
+             "# fin try L1_catch",
              "L2_try_fin:"])
 
 

@@ -68,10 +68,17 @@ class MarcoMIPS:
     cantidad_temporales: int = 0
     offset_receptor: int | None = None
     tamano: int = INICIO_PARAMETROS
+    offset_enlace_acceso: int | None = None   # función anidada: celda del enlace
 
     @property
     def es_metodo(self) -> bool:
         return self.offset_receptor is not None
+
+    @property
+    def es_funcion_anidada(self) -> bool:
+        """Función declarada dentro de otra (closure): le falta el enlace de
+        acceso para resolver las variables capturadas."""
+        return self.offset_enlace_acceso is not None
 
     @property
     def argumentos(self) -> int:
@@ -95,6 +102,9 @@ class MarcoMIPS:
             celdas.append(Celda(offset, nombre, f"local · {tipo}"))
         for k in range(1, self.cantidad_temporales + 1):
             celdas.append(Celda(self.offset_temporal(k), f"t{k}", "temporal"))
+        if self.es_funcion_anidada:
+            celdas.append(Celda(self.offset_enlace_acceso, "enlace de acceso",
+                                 "frame de la función que captura"))
         if self.es_metodo:
             celdas.append(Celda(self.offset_receptor, "this", "receptor"))
         for i in range(self.argumentos):
@@ -115,7 +125,8 @@ class MarcoMIPS:
         return "\n".join(lineas)
 
 
-def construir_marco(nombre: str, registro, temporales: int, metodo: bool) -> MarcoMIPS:
+def construir_marco(nombre: str, registro, temporales: int, metodo: bool,
+                    anidada: bool = False) -> MarcoMIPS:
     """`registro` puede ser None: las funciones generadas (Clase.__atributos)
     no tienen registro en memoria.py, pero igual necesitan marco."""
     marco = MarcoMIPS(nombre)
@@ -130,6 +141,9 @@ def construir_marco(nombre: str, registro, temporales: int, metodo: bool) -> Mar
     if metodo:
         marco.offset_receptor = _alinear_a(fin, 4)
         fin = marco.offset_receptor + TAMANO_PALABRA
+    if anidada:
+        marco.offset_enlace_acceso = _alinear_a(fin, 4)
+        fin = marco.offset_enlace_acceso + TAMANO_PALABRA
     marco.tamano = _alinear_a(fin, 8)
     return marco
 
@@ -154,6 +168,11 @@ def emitir_prologo(programa, marco: MarcoMIPS) -> None:
         programa.emitir("sb" if es_byte(tipo) else "sw", "$a2", f"{offset}($fp)",
                         comentario=f"parámetro {nombre}")
         indice += 1
+    if marco.es_funcion_anidada:
+        # Función anidada (closure): guarda el enlace de acceso recibido ($v1)
+        # para resolver las variables capturadas de la función que la contiene.
+        programa.emitir("sw", "$v1", f"{marco.offset_enlace_acceso}($fp)",
+                        comentario="enlace de acceso")
 
 
 def emitir_epilogo(programa, marco: MarcoMIPS) -> None:

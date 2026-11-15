@@ -1,5 +1,7 @@
 """
-Tests del backend de control de flujo: saltos y etiquetas (parte 2).
+Tests del backend de control de flujo y try/catch: saltos y etiquetas
+(`label`/`goto`/`if`/`ifFalse`, `break`/`continue`) y manejo de excepciones
+con `__lanzar` (parte 2).
 
 Verifica que los manejadores de `label`, `goto`, `if` y `ifFalse` que registra
 `src/backend/control.py` se traduzcan al MIPS esperado (`j`, `beqz`, `bnez` y
@@ -18,7 +20,7 @@ _BASE = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(_BASE, "..", "src", "compiler"))
 sys.path.insert(0, os.path.join(_BASE, "..", "src", "backend"))
 
-from test_mips_traductor import compilar
+from test_mips_traductor import MARS_JAR, compilar, ejecutar_en_mars
 
 
 class TestFlujoControl(unittest.TestCase):
@@ -60,6 +62,39 @@ class TestFlujoControl(unittest.TestCase):
         self.assertEqual(resultado.pendientes, [])
         self.assertIn("bnez", resultado.asm)     # condición verdadera -> repetir
         self.assertIn("L1_dowhile_inicio:", resultado.asm)
+
+
+class TestTryCatch(unittest.TestCase):
+    """Parte 2: try/catch en el backend MIPS — pila de frames, rutinas de error
+    y `__lanzar`."""
+
+    CODIGO_TRY_DIVISION_POR_CERO = """
+        let a: integer = 10;
+        let b: integer = 0;
+        let resultado: integer = 0;
+        try { resultado = a / b; } catch (err) { resultado = -1; print("Error atrapado"); }
+        print(resultado);
+        """
+
+    def test_intento_apila_frame_y_salta_a_catch(self):
+        resultado = compilar(self.CODIGO_TRY_DIVISION_POR_CERO)
+        self.assertEqual(resultado.pendientes, [])
+        # Pila de try: marco de 12 bytes (catch, $fp, $sp) con label alineado.
+        self.assertIn("__pila_try: .space 96", resultado.asm)
+        self.assertIn("        .align 4", resultado.asm)
+        # Antes de dividir: si el divisor es cero, saltar a la rutina de error.
+        self.assertIn("beqz", resultado.asm)
+        self.assertIn("__error_division", resultado.asm)
+        # `__lanzar` restaura el frame y salta al catch con `jr`.
+        self.assertIn("__lanzar", resultado.asm)
+        self.assertIn("jr", resultado.asm)
+
+    @unittest.skipUnless(MARS_JAR, "requiere MARS_JAR y Java")
+    def test_mars_catch_de_division_por_cero(self):
+        """Con el catch: la división por cero salta a `__lanzar`, que restaura el
+        frame y salta al catch; el programa continúa con el valor de catch."""
+        self.assertEqual(ejecutar_en_mars(compilar(self.CODIGO_TRY_DIVISION_POR_CERO).asm),
+                         "Error atrapado\n-1")
 
 
 if __name__ == "__main__":

@@ -81,6 +81,15 @@ def _alinear_8(valor: int) -> int:
     return valor if valor % 8 == 0 else valor + 8 - valor % 8
 
 
+def es_funcion_anidada(nombre_cualificado: str, clases) -> bool:
+    """'contador.interno' es una función anidada (closure): su prefijo es el
+    nombre de la función que la declara, no el de una clase. 'Animal.hablar' es
+    un método (prefijo = clase). Las funciones de primer nivel no son."""
+    if "." not in nombre_cualificado:
+        return False
+    return nombre_cualificado.rsplit(".", 1)[0] not in clases
+
+
 class TraductorMIPS:
     def __init__(self, programa_tac, tabla, resumen):
         self.tac = programa_tac
@@ -134,10 +143,13 @@ class TraductorMIPS:
         self.mips.emitir("syscall")
 
         for unidad in self.unidades[1:]:
-            marco = construir_marco(unidad.nombre,
-                                    self.resumen.registros.get(unidad.nombre),
-                                    unidad.max_temporal(),
-                                    es_metodo(unidad.nombre, self.tipos.clases))
+            marco = construir_marco(
+                unidad.nombre,
+                self.resumen.registros.get(unidad.nombre),
+                unidad.max_temporal(),
+                es_metodo(unidad.nombre, self.tipos.clases),
+                anidada=es_funcion_anidada(unidad.nombre, self.tipos.clases),
+            )
             self.marcos[unidad.nombre] = marco
             self.mips.comentario(f"function {unidad.nombre}")
             emitir_prologo(self.mips, marco)
@@ -292,13 +304,75 @@ class TraductorMIPS:
     def operando_especial(self, operando, auxiliar) -> str:
         """Operandos que no son literales ni direcciones: variables capturadas
         (parte 2) y atributos obj+N (parte 3)."""
+        if self._es_capturada(operando):
+            return self._leer_capturada(operando, auxiliar)
         self.mips.comentario(f"[pendiente] leer {operando}")
         self.pendientes.append(f"{self.unidad.nombre}: leer {operando}")
         return "$zero"
 
     def asignar_especial(self, destino, registro) -> None:
-        self.mips.comentario(f"[pendiente] escribir {destino} = {registro}")
+        if self._es_capturada(destino):
+            simbolo = self._simbolo_capturado(destino)
+            marco = self.marco
+            if (simbolo is None or not simbolo.direccion or marco is None
+                    or marco.offset_enlace_acceso is None):
+                self.mips.comentario(f"[pendiente] escribir {destino}")
+                self.pendientes.append(f"{self.unidad.nombre}: escribir {destino}")
+                return
+            offset = int(str(simbolo.direccion).split("+")[1])
+            self.mips.emitir("lw", "$v1", f"{marco.offset_enlace_acceso}($fp)",
+                            comentario="enlace de acceso")
+            self.mips.emitir("sw", registro, f"{offset}($v1)")
+            return
+        self.mips.comentario(f"[pendiente] escribir {destino}")
         self.pendientes.append(f"{self.unidad.nombre}: escribir {destino}")
+
+    # ------------------------------------------------------------------
+    # Variables capturadas (funciones anidadas / closures, parte 2)
+    # ------------------------------------------------------------------
+
+    def _enunciada(self) -> str:
+        """Función que contiene al scope en el que se lee/escribe (sin el
+        sufijo de la anidada): 'contador.interno' -> 'contador'."""
+        nombre = self.unidad.nombre or ""
+        return nombre.rsplit(".", 1)[0] if "." in nombre else nombre
+
+    def _simbolo_capturado(self, nombre):
+        """Símbolo de la variable capturada: vive en el marco de la función que
+        la declara, a través del enlace de acceso."""
+        registro = self.resumen.registros.get(self._enunciada())
+        if registro is None:
+            return None
+        for simbolo in list(registro.parametros) + list(registro.locales):
+            if simbolo.name == nombre:
+                return simbolo
+        return None
+
+    def _es_capturada(self, nombre) -> bool:
+        return (self.marco is not None and self.marco.es_funcion_anidada
+                and isinstance(nombre, str) and "." not in nombre)
+
+    def _enlace_de_acceso(self):
+        """$v1 con el frame pointer de la función que captura (enlace recibido)."""
+        marco = self.marco
+        if marco is None or marco.offset_enlace_acceso is None:
+            return None
+        self.mips.emitir("lw", "$v1", f"{marco.offset_enlace_acceso}($fp)",
+                        comentario="enlace de acceso")
+        return "$v1"
+
+    def _leer_capturada(self, nombre, auxiliar) -> str:
+        simbolo = self._simbolo_capturado(nombre)
+        marco = self.marco
+        if (simbolo is None or not simbolo.direccion or marco is None
+                or marco.offset_enlace_acceso is None):
+            self.mips.comentario(f"[pendiente] leer {nombre}")
+            self.pendientes.append(f"{self.unidad.nombre}: leer capturada {nombre}")
+            return "$zero"
+        offset = int(str(simbolo.direccion).split("+")[1])
+        enlace = self._enlace_de_acceso()
+        self.mips.emitir("lw", auxiliar, f"{offset}({enlace})")
+        return auxiliar
 
     def antes_de_dividir(self, divisor) -> None:
         """Parte 2: verificar división por cero y saltar al catch."""
@@ -480,6 +554,14 @@ class TraductorMIPS:
         nombre, cantidad, destino = c.arg1, int(c.arg2), c.resultado
         pos = self.pos
         self.asignador.guardar_sucios(lambda n: self._vivo(n, pos), "antes de call")
+        if es_funcion_anidada(nombre, self.tipos.clases):
+            # Función anidada (closure): el llamador pasa su enlace de acceso en
+            # $v1 antes del jal; el prólogo de la anidada lo guarda en su celda.
+            if self.marco is not None and self.marco.es_funcion_anidada:
+                self.mips.emitir("lw", "$v1", f"{self.marco.offset_enlace_acceso}($fp)",
+                                comentario="enlace de acceso")
+            else:
+                self.mips.emitir("move", "$v1", "$fp", comentario="enlace de acceso")
         self.mips.emitir("jal", etiqueta_funcion(nombre))
         if cantidad:
             self.mips.emitir("addiu", "$sp", "$sp", 4 * cantidad,

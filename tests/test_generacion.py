@@ -80,7 +80,7 @@ class TestCompuertaDeGeneracion(BaseGeneracion):
         sirven para revisarla en el IDE aunque el programa no compile."""
         resultado = self.analizar('let n: integer = 1;\nlet malo: boolean = 42;')
         self.assertFalse(resultado.genero_tac)
-        self.assertTrue(any("@global+" in fila["Símbolos"] for fila in resultado.ambitos))
+        self.assertTrue(any("global+" in fila["Dirección"] for fila in resultado.ambitos))
 
 
 class TestCompuertaSobreLosEjemplos(BaseGeneracion):

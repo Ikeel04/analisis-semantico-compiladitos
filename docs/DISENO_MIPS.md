@@ -220,6 +220,16 @@ receptor es el primer argumento apilado y el prólogo lo copia a su celda.
 propia copia de parámetros, locales y temporales. El enlace de control
 encadena los marcos: esa cadena es la rama actual del **árbol de activación**.
 
+### Try/catch (`__pila_try`)
+
+Los `try` se traducen con los marcadores del TAC (`# try Lk_catch` /
+`# fin try Lk_catch`) que abren y cierran una **pila de frames** en la
+memoria (`__pila_try: .space 96`, frames de 12 bytes: catch, `$fp`, `$sp`;
+puntero base en `$v1`). El `ifFalse`/`goto` al catch empuja el frame; un error
+(`__error_division`, `__error_indice`, `__error_null`) salta a `__lanzar`, que
+si hay frames los restaura (`$fp`/`$sp`) y salta al catch con `jr $v0`; si la
+pila está vacía imprime la excepción no atrapada y termina.
+
 ### Árbol de activación (`activacion.py`)
 
 El árbol de activación depende de la ejecución, no del texto del programa. Para
@@ -370,10 +380,10 @@ python -m unittest discover -s tests -v
 | Expresiones lógicas | 1 | 1 | listo |
 | Optimización por mirilla (≥ 6) | 3 | 1 | listo (11 reglas) |
 | Ensamblador/simulador compatible | 1 | 1 | listo (MARS 4.5, tests automáticos) |
-| Sentencias de control | 3 | 2 | pendiente: `label`, `goto`, `if`, `ifFalse` |
-| Funciones y parámetros | 2 | 1 + 2 | convención de llamada lista; falta enlace de acceso (variables capturadas) |
-| Recursividad | 2 | 1 + 2 | marcos listos; falta control de flujo para el caso base |
-| try / catch | 2 | 2 | pendiente |
+| Sentencias de control | 3 | 2 | **listo**: `src/backend/control.py` (label/goto/if/ifFalse, break/continue) |
+| Funciones y parámetros | 2 | 1 + 2 | convención de llamada lista; **enlace de acceso** para variables capturadas listo (`$v1`) |
+| Recursividad | 2 | 1 + 2 | marcos y control de flujo listos (caso base con `if`) |
+| try / catch | 2 | 2 | **listo**: pila `__pila_try`, rutinas `__error_*` y `__lanzar` |
 | Arreglos | 1 | 3 | pendiente |
 | Clases y objetos | 2 | 3 | celda de `this` lista; faltan `new`, `=.`, `.=`, `obj+N` |
 | Herencia | 2 | 3 | pendiente (depende de clases) |

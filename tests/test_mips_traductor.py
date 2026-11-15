@@ -213,6 +213,45 @@ class TestRegistrosDeActivacion(unittest.TestCase):
         """).asm
         self.assertIn("antes de call", asm)
 
+    def test_funcion_anidada_tiene_celda_de_enlace(self):
+        marcos = compilar("""
+        function externa(): integer {
+          var base: integer = 10;
+          function interna(x: integer): integer { return base + x; }
+          return interna(1);
+        }
+        let r: integer = externa();
+        """).marcos
+        marco = marcos["externa.interna"]
+        self.assertTrue(marco.es_funcion_anidada)
+        self.assertIsNotNone(marco.offset_enlace_acceso)
+        self.assertIn("enlace de acceso", [c.nombre for c in marco.celdas()])
+
+    def test_prologo_de_funcion_anidada_guarda_enlace_en_v1(self):
+        resultado = compilar("""
+        function externa(): integer {
+          var base: integer = 10;
+          function interna(x: integer): integer { return base + x; }
+          return interna(1);
+        }
+        let r: integer = externa();
+        """)
+        marco = resultado.marcos["externa.interna"]
+        self.assertIn(f"sw      $v1, {marco.offset_enlace_acceso}($fp)", resultado.asm)
+
+    def test_llamada_a_funcion_anidada_pasa_enlace_en_v1(self):
+        resultado = compilar("""
+        function externa(): integer {
+          var base: integer = 10;
+          function interna(x: integer): integer { return base + x; }
+          return interna(1);
+        }
+        let r: integer = externa();
+        """)
+        asm = resultado.asm
+        self.assertIn("jal", asm)
+        self.assertIn("# enlace de acceso", asm)
+
 
 class TestExpresiones(unittest.TestCase):
 
@@ -331,6 +370,16 @@ class TestEjecucionMARS(unittest.TestCase):
         print(mezcla(6, true, 7, 1.25));
         print(cuadruple(5) + doble(3) * cuadruple(doble(1)));
         """), "false\n1.25\n41\n68")
+
+    def test_funcion_anidada_captura_en_mars(self):
+        self.assertEqual(self.ejecutar("""
+        function contador(): integer {
+          var base: integer = 10;
+          function interno(x: integer): integer { return base + x; }
+          return interno(5);
+        }
+        print(contador());
+        """), "15")
 
     def test_presion_de_registros(self):
         nombres = [f"v{i}" for i in range(20)]

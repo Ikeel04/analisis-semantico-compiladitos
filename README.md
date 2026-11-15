@@ -48,6 +48,9 @@ Streamlit. Si el programa tiene cualquier error, no se genera código intermedio
   - **Registros de activación** (`marcos.py`): marco en la pila con enlace de
     control, dirección de retorno, parámetros, locales, temporales y receptor;
     prólogo, epílogo y convención de llamada.
+  - **Control de flujo y try/catch** (`control.py`): saltos y etiquetas
+    (`label`/`goto`/`if`/`ifFalse`, `break`/`continue`) y try/catch (pila
+    `__pila_try`, rutinas `__error_*` y `__lanzar`).
   - **Traducción** (`traductor.py`, `tipos.py`): variables y constantes,
     expresiones aritméticas (enteros y float), lógicas y relacionales, `print`,
     llamadas y retornos.
@@ -119,6 +122,13 @@ Tests del código intermedio: `test_tac` (instrucciones), `test_temporales`
 `test_tac_expresiones`, `test_tac_controlflujo`, `test_tac_funciones`,
 `test_tac_arreglos` y `test_tac_clases`.
 
+Tests del backend MIPS: `test_mips_registros` (descriptores, getReg, vida y
+bloques), `test_mips_traductor` (marcos, llamadas, expresiones, compuerta y
+ejecución en MARS), `test_mips_control` (saltos y etiquetas, try/catch),
+`test_mips_mirilla` (cada regla y equivalencia en MARS),
+`test_mips_activacion` (árbol, salida y límites) y `test_mips_ejemplos` (todo
+`ejemplos/asm_*.cps` en MARS contra la salida esperada).
+
 ## Sistemas de tipos y ámbito (matriz de conformidad)
 
 | Requisito | Implementación | Tests (éxito/fallo) |
@@ -179,3 +189,6 @@ generación de código intermedio (`tac_*.cps`):
 | `asm_02_expresiones.cps` | ensamblador: aritméticas, lógicas, float, reducción de fuerza |
 | `asm_03_registros.cps` | ensamblador: presión de registros y desalojos de getReg |
 | `asm_04_activacion.cps` | ensamblador: marcos, parámetros de varios tipos, llamadas anidadas |
+| `asm_05_control.cps` | ensamblador: control de flujo (`if`, `while`, `for`, `switch`, `break`, `continue`, `do-while`) |
+| `asm_06_enlace_acceso.cps` | ensamblador: funciones anidadas con variables capturadas (enlace de acceso) |
+| `asm_08_trycatch.cps` | ensamblador: `try/catch` (error capturado, división por cero) |
