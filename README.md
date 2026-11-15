@@ -190,5 +190,6 @@ generación de código intermedio (`tac_*.cps`):
 | `asm_03_registros.cps` | ensamblador: presión de registros y desalojos de getReg |
 | `asm_04_activacion.cps` | ensamblador: marcos, parámetros de varios tipos, llamadas anidadas |
 | `asm_05_control.cps` | ensamblador: control de flujo (`if`, `while`, `for`, `switch`, `break`, `continue`, `do-while`) |
-| `asm_06_enlace_acceso.cps` | ensamblador: funciones anidadas con variables capturadas (enlace de acceso) |
+| `asm_06_funciones.cps` | ensamblador: funciones anidadas con variables capturadas (enlace de acceso) |
+| `asm_07_recursividad.cps` | ensamblador: recursividad con control de flujo (caso base) |
 | `asm_08_trycatch.cps` | ensamblador: `try/catch` (error capturado, división por cero) |

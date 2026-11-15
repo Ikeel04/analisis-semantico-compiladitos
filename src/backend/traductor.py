@@ -101,6 +101,7 @@ class TraductorMIPS:
         self.traza: list[dict] = []
         self.pendientes: list[str] = []
         self.estadisticas_registros: dict[str, dict] = {}
+        self._args: list[str] = []   # operandos apilados por `parametro`, para `llamar`
 
         self.base_temporales_globales = _alinear_8(resumen.tamano_global)
 
@@ -322,10 +323,34 @@ class TraductorMIPS:
             offset = int(str(simbolo.direccion).split("+")[1])
             self.mips.emitir("lw", "$v1", f"{marco.offset_enlace_acceso}($fp)",
                             comentario="enlace de acceso")
-            self.mips.emitir("sw", registro, f"{offset}($v1)")
+            self.mips.emitir("sb" if es_byte(simbolo.type) else "sw", registro, f"{offset}($v1)")
             return
         self.mips.comentario(f"[pendiente] escribir {destino}")
         self.pendientes.append(f"{self.unidad.nombre}: escribir {destino}")
+
+    def _convertir_argumentos_flotantes(self, nombre: str, cantidad: int) -> None:
+        """Si un parámetro declarado float recibe un argumento integer, el TAC no
+        convierte (`param` apila los bits tal cual): se convierte aquí, en el
+        sitio de la llamada, antes del `jal`. El intérprete hace lo mismo."""
+        if not cantidad:
+            self._args.clear()
+            return
+        args = self._args[-cantidad:]
+        self._args = self._args[:-cantidad]
+        registro = self.resumen.registros.get(nombre)
+        if registro is None:
+            return
+        for i, param in enumerate(registro.parametros):
+            if i >= len(args):
+                break
+            if param.type == FLOTANTE and self.tipo(args[i]) == ENTERO:
+                offset = 4 * (cantidad - 1 - i)
+                self.mips.emitir("lw", "$a2", f"{offset}($sp)",
+                                 comentario="entero -> flotante")
+                self.mips.emitir("mtc1", "$a2", "$f4")
+                self.mips.emitir("cvt.s.w", "$f4", "$f4")
+                self.mips.emitir("mfc1", "$a2", "$f4")
+                self.mips.emitir("sw", "$a2", f"{offset}($sp)")
 
     # ------------------------------------------------------------------
     # Variables capturadas (funciones anidadas / closures, parte 2)
@@ -371,7 +396,8 @@ class TraductorMIPS:
             return "$zero"
         offset = int(str(simbolo.direccion).split("+")[1])
         enlace = self._enlace_de_acceso()
-        self.mips.emitir("lw", auxiliar, f"{offset}({enlace})")
+        self.mips.emitir("lbu" if es_byte(simbolo.type) else "lw", auxiliar,
+                         f"{offset}({enlace})")
         return auxiliar
 
     def antes_de_dividir(self, divisor) -> None:
@@ -547,12 +573,14 @@ class TraductorMIPS:
 
     def parametro(self, c) -> None:
         r = self.registro_de(c.arg1)
+        self._args.append(c.arg1)
         self.mips.emitir("addiu", "$sp", "$sp", -4)
         self.mips.emitir("sw", r, "0($sp)", comentario=f"param {c.arg1}")
 
     def llamar(self, c) -> None:
         nombre, cantidad, destino = c.arg1, int(c.arg2), c.resultado
         pos = self.pos
+        self._convertir_argumentos_flotantes(nombre, cantidad)
         self.asignador.guardar_sucios(lambda n: self._vivo(n, pos), "antes de call")
         if es_funcion_anidada(nombre, self.tipos.clases):
             # Función anidada (closure): el llamador pasa su enlace de acceso en

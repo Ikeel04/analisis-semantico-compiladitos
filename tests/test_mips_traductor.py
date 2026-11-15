@@ -381,6 +381,20 @@ class TestEjecucionMARS(unittest.TestCase):
         print(contador());
         """), "15")
 
+    def test_entero_a_float_en_argumentos_en_mars(self):
+        """El parámetro declarado float recibe un integer: el backend convierte
+        integer -> float en el sitio de la llamada (igual que el intérprete)."""
+        self.assertEqual(self.ejecutar("""
+        function suma_float(a: float, b: float): float {
+          return a + b;
+        }
+        let r: float = suma_float(3, 4);
+        print(r);
+        let x: integer = 10;
+        let r2: float = suma_float(x, 2);
+        print(r2);
+        """), "7.0\n12.0")
+
     def test_presion_de_registros(self):
         nombres = [f"v{i}" for i in range(20)]
         codigo = "".join(f"let {n}: integer = {i};" for i, n in enumerate(nombres))
