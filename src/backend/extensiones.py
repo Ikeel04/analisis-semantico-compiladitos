@@ -25,7 +25,9 @@ etiqueta. Las etiquetas internas de una rutina deben empezar con `__L` (la
 mirilla puede borrarlas si quedan sin uso).
 """
 
-EXTENSIONES: list = []
+from control import registrar as registrar_control
+
+EXTENSIONES: list = [registrar_control]
 
 
 def aplicar(traductor) -> None:
