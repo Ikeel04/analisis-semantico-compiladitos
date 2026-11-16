@@ -26,8 +26,9 @@ mirilla puede borrarlas si quedan sin uso).
 """
 
 from control import registrar as registrar_control
+from datos import registrar as registrar_datos
 
-EXTENSIONES: list = [registrar_control]
+EXTENSIONES: list = [registrar_control, registrar_datos]
 
 
 def aplicar(traductor) -> None:
