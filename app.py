@@ -27,6 +27,7 @@ for _carpeta in ("src/parser", "src/lexico", "src/compiler", "src/ide", "src/sem
 import streamlit as st
 
 from arbol import figura_arbol
+from estilo import dot_con_tema, encabezado, inyectar_tema, marca_lateral
 from pipeline import (
     MENSAJE_ASM_BLOQUEADO,
     MENSAJE_EXITO,
@@ -40,66 +41,12 @@ from symbol_table import SymbolTable, SemanticError
 
 CARPETA_EJEMPLOS = _BASE / "ejemplos"
 
-st.set_page_config(page_title="Compiscript — Analizador", page_icon="🔤", layout="wide")
+st.set_page_config(page_title="Compiscript — Compilador", page_icon="🐉", layout="wide")
 
 
 def _inyectar_css() -> None:
-    """Estilo de editor de código (tema oscuro tipo VSCode)."""
-    st.markdown(
-        """
-        <style>
-        [data-testid="stTextArea"] {
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        [data-testid="stTextArea"] textarea {
-            background-color: #1E1E1E;
-            color: #D4D4D4;
-            font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-            font-size: 14px;
-            line-height: 1.6;
-            border: 1px solid #3C3C3C;
-            border-radius: 6px;
-            caret-color: #569CD6;
-        }
-        [data-testid="stTextArea"] textarea:focus {
-            border-color: #569CD6;
-            box-shadow: 0 0 0 1px #569CD6;
-        }
-        [data-testid="stTabs"] button p {
-            font-weight: 600;
-        }
-        [data-testid="stTabs"] button[aria-selected="true"] p {
-            color: #569CD6;
-        }
-        .barra-archivo {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 4px 0 12px 0;
-        }
-        .chip-archivo {
-            font-family: "SF Mono", Menlo, Consolas, monospace;
-            font-size: 13px;
-            color: #E6E6E6;
-            background-color: #2D2D2D;
-            border: 1px solid #3C3C3C;
-            border-radius: 4px;
-            padding: 3px 10px;
-        }
-        .chip-estado {
-            font-size: 12px;
-            font-weight: 600;
-            border-radius: 12px;
-            padding: 3px 12px;
-        }
-        .chip-estado.sin-analizar { background-color: #3C3C3C; color: #CCCCCC; }
-        .chip-estado.valido      { background-color: #2A5A2A; color: #8FE388; }
-        .chip-estado.con-errores { background-color: #5A2A2A; color: #FF9E9E; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    """Tema «dragón de fuego» (src/ide/estilo.py)."""
+    inyectar_tema()
 
 
 def _tabla_de_tokens(tokens: list[Token]):
@@ -215,8 +162,7 @@ st.session_state.setdefault("analizado", None)
 
 
 with st.sidebar:
-    st.header("Compiscript")
-    st.caption("Compilador: análisis, código intermedio y ensamblador MIPS")
+    marca_lateral()
 
     subido = st.file_uploader("Abrir archivo .cps", type=["cps"])
     if subido is not None:
@@ -265,6 +211,7 @@ codigo = st.session_state["codigo"]
 nombre = st.session_state["nombre"]
 resultado = st.session_state["resultado"]
 
+encabezado(resultado if codigo == st.session_state.get("analizado") else None)
 _mostrar_barra_estado(nombre, resultado, codigo)
 
 (tab_editor, tab_errores, tab_tokens, tab_ambitos, tab_arbol, tab_tac, tab_memoria,
@@ -504,7 +451,7 @@ with tab_activacion:
             "con sus argumentos y el valor que devolvió, y es hija de quien la hizo."
         )
         if ejecucion.raiz.hijos:
-            st.graphviz_chart(ejecucion.como_dot(), width="stretch")
+            st.graphviz_chart(dot_con_tema(ejecucion.como_dot()), width="content")
         with st.expander("Ver el árbol como texto", expanded=not ejecucion.raiz.hijos):
             st.code(ejecucion.como_texto(), language="text")
 
