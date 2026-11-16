@@ -77,9 +77,16 @@ class TestEstructura(unittest.TestCase):
         self.assertEqual(resultado.pendientes, [])
 
     def test_operaciones_sin_manejador_quedan_pendientes(self):
-        resultado = compilar("let a: integer[] = [1, 2];")
-        self.assertTrue(resultado.pendientes)
-        self.assertIn("[pendiente]", resultado.asm)
+        # Ya todas las operaciones tienen manejador: se quita uno a propósito
+        # para comprobar que el mecanismo de pendientes sigue funcionando.
+        import tac as T
+        from traductor import TraductorMIPS
+        analisis = analizar_codigo("test.cps", "let a: integer[] = [1, 2];")
+        traductor = TraductorMIPS(analisis.tac, analisis.tabla, analisis.memoria)
+        del traductor.manejadores[T.NUEVO_ARREGLO]
+        asm = traductor.traducir().como_texto()
+        self.assertTrue(traductor.pendientes)
+        self.assertIn("[pendiente]", asm)
 
 
 class TestExtensiones(unittest.TestCase):
