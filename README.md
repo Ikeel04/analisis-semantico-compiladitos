@@ -1,8 +1,10 @@
-# Compiscript — Análisis semántico y código intermedio
+# Compiscript — Compilador hasta ensamblador MIPS
 
-Compilador de Compiscript hasta código intermedio (TAC): análisis léxico,
-sintáctico y semántico, y generación de cuádruplos, con interfaz gráfica en
-Streamlit. Si el programa tiene cualquier error, no se genera código intermedio.
+Compilador de Compiscript: análisis léxico, sintáctico y semántico, generación
+de código intermedio (TAC, cuádruplos) y generación de ensamblador **MIPS32** a
+partir de ese TAC, con interfaz gráfica en Streamlit. El `.asm` se ejecuta en
+**MARS 4.5**. Si el programa tiene cualquier error, no se genera código
+intermedio ni ensamblador.
 
 ## Qué incluye
 
@@ -51,6 +53,11 @@ Streamlit. Si el programa tiene cualquier error, no se genera código intermedio
   - **Control de flujo y try/catch** (`control.py`): saltos y etiquetas
     (`label`/`goto`/`if`/`ifFalse`, `break`/`continue`) y try/catch (pila
     `__pila_try`, rutinas `__error_*` y `__lanzar`).
+  - **Arreglos, clases, herencia y cadenas** (`datos.py`): arreglos en el heap
+    con verificación de null y de límites, matrices, `length`; objetos con
+    `new`, atributos por offset (heredados primero), atributos sin `this`
+    dentro de métodos; concatenación y comparación de cadenas e impresión de
+    arreglos con rutinas de soporte.
   - **Traducción** (`traductor.py`, `tipos.py`): variables y constantes,
     expresiones aritméticas (enteros y float), lógicas y relacionales, `print`,
     llamadas y retornos.
@@ -99,11 +106,18 @@ python -m streamlit run app.py
 ### Ejecutar el ensamblador en MARS
 
 El `.asm` que se descarga del IDE se ensambla y ejecuta en MARS 4.5
-(<https://github.com/dpetersanderson/MARS/releases>, requiere Java):
+(<https://github.com/dpetersanderson/MARS/releases>, requiere Java 8 o más).
+
+Desde consola:
 
 ```bash
 java -jar Mars4_5.jar nc programa.asm
 ```
+
+Con la interfaz de MARS: `File → Open` el `.asm`, `Run → Assemble` (F3) y
+`Run → Go` (F5); la salida aparece en «Run I/O». La salida debe ser igual a la
+**salida esperada** que muestra la pestaña «Activación» del IDE (la produce el
+intérprete del TAC).
 
 Los tests que comparan la salida de MARS con la esperada corren si la variable
 `MARS_JAR` apunta al `.jar` (si no, se saltan):
@@ -126,8 +140,10 @@ Tests del backend MIPS: `test_mips_registros` (descriptores, getReg, vida y
 bloques), `test_mips_traductor` (marcos, llamadas, expresiones, compuerta y
 ejecución en MARS), `test_mips_control` (saltos y etiquetas, try/catch),
 `test_mips_mirilla` (cada regla y equivalencia en MARS),
-`test_mips_activacion` (árbol, salida y límites) y `test_mips_ejemplos` (todo
-`ejemplos/asm_*.cps` en MARS contra la salida esperada).
+`test_mips_activacion` (árbol, salida y límites), `test_mips_datos` (arreglos,
+objetos, herencia y cadenas: casos exitosos y fallidos en MARS) y
+`test_mips_ejemplos` (todo `ejemplos/asm_*.cps` en MARS contra la salida
+esperada, optimizado y sin optimizar).
 
 ## Sistemas de tipos y ámbito (matriz de conformidad)
 
@@ -193,3 +209,39 @@ generación de código intermedio (`tac_*.cps`):
 | `asm_06_funciones.cps` | ensamblador: funciones anidadas con variables capturadas (enlace de acceso) |
 | `asm_07_recursividad.cps` | ensamblador: recursividad con control de flujo (caso base) |
 | `asm_08_trycatch.cps` | ensamblador: `try/catch` (error capturado, división por cero) |
+| `asm_09_arreglos.cps` | ensamblador: arreglos en el heap, límites, matrices, `foreach`, arreglos como parámetro, índice fuera de rango atrapado |
+| `asm_10_clases.cps` | ensamblador: `new`, atributos (`boolean` de 1 byte), métodos con atributos sin `this`, objetos como parámetros y en arreglos |
+| `asm_11_herencia.cps` | ensamblador: 3 niveles, atributos heredados e inicializados en la declaración, métodos redefinidos, constructor heredado |
+| `asm_12_cadenas.cps` | ensamblador: concatenación en tiempo de ejecución, recursión con cadenas, `==`/`!=` por contenido |
+
+Todos los `asm_*.cps` se verifican solos con `tests/test_mips_ejemplos.py`: no
+dejan instrucciones pendientes y MARS imprime lo mismo que el intérprete.
+
+### Rúbrica del Proyecto 3 y dónde está cada punto
+
+| Ítem | Dónde | Ejemplo |
+| --- | --- | --- |
+| Selección de registros (4) | `registros.py`, `vida.py`, pestaña «Registros» | `asm_03_registros.cps` |
+| Registros y árbol de activación (5) | `marcos.py`, `activacion.py`, pestaña «Activación» | `asm_04_activacion.cps` |
+| Variables y constantes (1) | `traductor.py` | `asm_01_variables.cps` |
+| Expresiones aritméticas (1) | `traductor.py` | `asm_02_expresiones.cps` |
+| Expresiones lógicas (1) | `traductor.py` | `asm_02_expresiones.cps` |
+| Arreglos (1) | `datos.py` | `asm_09_arreglos.cps` |
+| Sentencias de control (3) | `control.py` | `asm_05_control.cps` |
+| Funciones y parámetros (2) | `traductor.py`, `marcos.py` | `asm_06_funciones.cps` |
+| Recursividad (2) | `marcos.py`, `control.py` | `asm_07_recursividad.cps` |
+| Clases y objetos (2) | `datos.py` | `asm_10_clases.cps` |
+| Herencia (2) | `datos.py` + TAC | `asm_11_herencia.cps` |
+| try/catch (2) | `control.py` | `asm_08_trycatch.cps`, `asm_09_arreglos.cps` |
+| Mirilla, al menos 6 (3) | `mirilla.py` (11 reglas), tabla en «Ensamblador» | cualquiera |
+| Simulador compatible (1) | MARS 4.5, `tests/test_mips_*.py` | — |
+
+### Limitaciones conocidas
+
+- Enlace estático de métodos (sin tabla virtual): el método que se llama es el
+  del tipo declarado de la variable (`DISENO_TAC.md` §7).
+- `print` de un objeto imprime su dirección (el intérprete muestra `<Clase>`):
+  en los ejemplos se imprimen sus atributos. Los arreglos de `integer`,
+  `boolean` y `string` (de cualquier dimensión) sí se imprimen como `[1, 2]`.
+- `float` dentro de una concatenación no se convierte a cadena (el formato de
+  Java no es fácil de igualar); Compiscript tampoco permite `string + float`.

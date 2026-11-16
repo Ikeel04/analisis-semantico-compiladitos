@@ -164,8 +164,10 @@ class SymbolTable:
                     "Ámbito": etiqueta,
                     "Área": sym.area or "—",
                     "Dirección": sym.direccion or "—",
-                    "Offset": sym.offset if sym.offset is not None else "—",
-                    "Tamaño": sym.tamano if sym.tamano is not None else "—",
+                    # Texto en las dos columnas: mezclar int y "—" hace que
+                    # Streamlit (pyarrow) no pueda convertir la tabla.
+                    "Offset": str(sym.offset) if sym.offset is not None else "—",
+                    "Tamaño": str(sym.tamano) if sym.tamano is not None else "—",
                 })
             for hijo in scope.children:
                 filas += self.filas_para_ide(hijo, profundidad + 1)

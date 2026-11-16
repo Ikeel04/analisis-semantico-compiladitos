@@ -83,8 +83,8 @@ Los nombres de función se convierten en etiquetas válidas: `Animal.hablar` →
 | Entero / booleano / null | `42`, `true`, `null` | inmediato (`li`) o `$zero` |
 | Float | `2.5` | inmediato con los bits IEEE-754 (`li $a2, 0x40200000`) |
 | Cadena | `"hola"` | `la` a la etiqueta en `.data` |
-| Atributo dentro de método | `obj+4` | **parte 3** (`4(this)`) |
-| Variable capturada | `base` | **parte 2** (enlace de acceso) |
+| Atributo dentro de método | `obj+4` | `4(this)`: se carga el receptor de su celda del marco (`datos.py`) |
+| Variable capturada | `base` | enlace de acceso (`$v1` al llamar, celda en el marco) |
 
 El tamaño de cada dato sale de su tipo (`memoria.tamano_de`): los `boolean`
 ocupan un byte y se leen/escriben con `lbu`/`sb`; todo lo demás es una palabra
@@ -223,12 +223,23 @@ encadena los marcos: esa cadena es la rama actual del **árbol de activación**.
 ### Try/catch (`__pila_try`)
 
 Los `try` se traducen con los marcadores del TAC (`# try Lk_catch` /
-`# fin try Lk_catch`) que abren y cierran una **pila de frames** en la
-memoria (`__pila_try: .space 96`, frames de 12 bytes: catch, `$fp`, `$sp`;
-puntero base en `$v1`). El `ifFalse`/`goto` al catch empuja el frame; un error
-(`__error_division`, `__error_indice`, `__error_null`) salta a `__lanzar`, que
-si hay frames los restaura (`$fp`/`$sp`) y salta al catch con `jr $v0`; si la
-pila está vacía imprime la excepción no atrapada y termina.
+`# fin try Lk_catch`). La pila de manejadores está en memoria:
+`__pila_try: .space 96` (frames de 12 bytes: catch, `$fp`, `$sp`) y su tope en
+la palabra `__pila_try_tope` (no en un registro, así no lo pisan las funciones
+anidadas, que usan `$v1` para el enlace de acceso).
+
+- `# try Lk`: apila un frame (usa solo `$a0`/`$a1`).
+- Un `goto` que sale del cuerpo del try (el `goto L_fin` que salta el catch, un
+  `break`/`continue`) y un `return` desapilan los frames de los try que dejan.
+- Un error (`__error_division`, `__error_indice`, `__error_null`,
+  `__error_objeto_null`) carga su mensaje en `$a0` y salta a `__lanzar`, que si
+  hay frames saca el del try más interno, restaura `$fp`/`$sp` y salta al catch
+  con `jr`; el catch corre sin su frame, así que un error dentro del catch va al
+  try externo. Si la pila está vacía imprime el mensaje y termina.
+
+Como el catch empieza un bloque, lee las variables de memoria: antes de una
+instrucción que puede fallar dentro de un try, `datos.py` guarda las variables
+que solo están en registro.
 
 ### Árbol de activación (`activacion.py`)
 
@@ -297,7 +308,62 @@ Reparto de manejadores:
 | `label`, `goto`, `if`, `ifFalse` | `newarray`, `=[]`, `[]=`, `length` |
 | `antes_de_dividir` (división por cero → catch) | `new`, `=.`, `.=`, `obj+N` |
 | `operando_especial` para variables capturadas | `concatenar` y comparación de cadenas |
-| marcadores de `try` para el catch | `print` de arreglos/objetos |
+| marcadores de `try` para el catch | `print` de arreglos |
+
+### Datos compuestos (`datos.py`, parte 3)
+
+**Arreglos.** En el heap (`sbrk`, que MARS entrega en ceros):
+`[longitud][e0][e1]…`, todo en palabras de 4 bytes (también los `boolean`); el
+puntero apunta a la longitud. Las matrices son arreglos de punteros.
+
+| TAC | MIPS |
+|---|---|
+| `t = newarray n` | `li $a0, 4·(n+1)`, `sbrk`, `sw n, 0(t)` |
+| `t = a[i]` | `beqz a, __error_null`; `lw $a1, 0(a)`; `sltu $a1, i, $a1`; `beqz $a1, __error_indice`; `sll $a1, i, 2`; `addu $a1, $a1, a`; `lw t, 4($a1)` |
+| `a[i] = v` | mismas verificaciones y `sw v, 4($a1)` |
+| `t = length a` | `lw t, 0(a)` |
+
+El `sltu` sin signo cubre también los índices negativos. Con índice literal la
+dirección es directa (`lw t, 4+4k(a)`), y si el arreglo viene de un
+`newarray n` del mismo bloque y `k < n` no se verifica nada (así se llenan los
+literales `[1, 2, 3]` sin verificaciones).
+
+**Objetos.** `t = new C` reserva `resumen.clases[C]` bytes (redondeado a 4).
+Cada atributo vive en el `offset` que le dio `memoria.py`: los heredados van
+primero, así que un atributo tiene el mismo offset en la clase base y en las
+derivadas (`datos.construir_atributos` repite ese cálculo y un test lo compara
+con la tabla de símbolos). Los `boolean` son de 1 byte (`lbu`/`sb`).
+
+| TAC | MIPS |
+|---|---|
+| `t = o.campo` | `beqz o, __error_objeto_null`; `lw`/`lbu t, offset(o)` |
+| `o.campo = v` | `beqz o, …`; `sw`/`sb v, offset(o)` |
+| `obj+N` (leer) | `lw aux, <receptor>($fp)`; `lw`/`lbu aux, N(aux)` |
+| `obj+N = v` | `lw $a1, <receptor>($fp)`; `sw`/`sb v, N($a1)` |
+
+Con `this` no se verifica null. Los atributos y los elementos de arreglos
+nunca se guardan en registros entre instrucciones (no hay copias viejas).
+
+**Herencia.** Lo estático lo resuelve el TAC: el `call` usa la clase que
+declara el método, el constructor heredado se busca en los ancestros y
+`Clase.__atributos` inicializa los atributos con valor. En el backend basta con
+el layout con los heredados primero: un `Cachorro` se pasa como receptor a
+`Animal.hablar` y `obj+0` sigue siendo `nombre`.
+
+**Cadenas.** Rutinas de soporte (solo modifican `$a0`–`$a3` y `$v0`; las que
+necesitan más registros los guardan en la pila; ninguna toca `$v1`):
+
+| Rutina | Qué hace |
+|---|---|
+| `__strlen` | `$a0` → `$v0` = longitud |
+| `__concat` | `$a0 + $a1` → `$v0`: `sbrk` de `len(a)+len(b)+1` (redondeado a 4) y copia; una cadena null se concatena como `"null"` |
+| `__strcmp` | `==`/`!=` entre dos `string`: compara contenido (`!=` es `xori 1`) |
+| `__int_a_cadena` | entero → cadena decimal (con `divu`, sirve para −2³¹) |
+| `__imprimir_arreglo` | imprime `[e0, e1]` de `integer`, `boolean` o `string`, recursiva para matrices |
+
+Por qué solo `$a*`/`$v0`: el asignador cree que los `$t`/`$s` conservan su
+valor durante toda la instrucción del TAC; si la rutina no los toca (o los
+restaura), no hay que guardar ni invalidar nada antes del `jal`.
 
 El asignador ya maneja las fronteras de bloque en esas instrucciones: los
 manejadores solo emiten el salto o la etiqueta.
@@ -350,6 +416,8 @@ error léxico, sintáctico o semántico no hay TAC, y sin TAC no hay ensamblador
 | `src/backend/traductor.py` | `TraductorMIPS`: manejadores por cuádruplo |
 | `src/backend/mirilla.py` | optimizador de mirilla |
 | `src/backend/activacion.py` | intérprete del TAC y árbol de activación |
+| `src/backend/control.py` | control de flujo y try/catch (parte 2) |
+| `src/backend/datos.py` | arreglos, objetos, herencia y cadenas (parte 3) |
 | `src/backend/extensiones.py` | registro de extensiones de las partes 2 y 3 |
 | `src/backend/backend.py` | punto de entrada `generar_ensamblador` |
 
@@ -384,6 +452,10 @@ python -m unittest discover -s tests -v
 | Funciones y parámetros | 2 | 1 + 2 | convención de llamada lista; **enlace de acceso** para variables capturadas listo (`$v1`) |
 | Recursividad | 2 | 1 + 2 | marcos y control de flujo listos (caso base con `if`) |
 | try / catch | 2 | 2 | **listo**: pila `__pila_try`, rutinas `__error_*` y `__lanzar` |
-| Arreglos | 1 | 3 | pendiente |
-| Clases y objetos | 2 | 3 | celda de `this` lista; faltan `new`, `=.`, `.=`, `obj+N` |
-| Herencia | 2 | 3 | pendiente (depende de clases) |
+| Arreglos | 1 | 3 | **listo**: `src/backend/datos.py` (heap, null, límites, matrices, `length`, impresión) |
+| Clases y objetos | 2 | 3 | **listo**: `new`, `=.`, `.=`, `obj+N`, `boolean` de 1 byte |
+| Herencia | 2 | 3 | **listo**: atributos heredados primero, constructor heredado, métodos redefinidos (`asm_11_herencia.cps`) |
+| Cadenas en tiempo de ejecución | — | 3 | **listo**: `__concat`, `__strcmp`, `__int_a_cadena` |
+
+Pruebas de la parte 3: `tests/test_mips_datos.py` (estructura, casos exitosos y
+fallidos en MARS) y `ejemplos/asm_09` a `asm_12`.
